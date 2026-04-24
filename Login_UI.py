@@ -91,7 +91,8 @@ class LoginWindow(QWidget):
         card.setStyleSheet("""
             QFrame#card {
                 background-color: #ffffff;
-                border-radius: 16px;
+                border-radius: 16px;  
+                border: 2px solid #000000;              
             }
         """)
 
