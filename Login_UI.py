@@ -40,10 +40,11 @@ class LoginWindow(QWidget):
         brand_logo.setStyleSheet("font-size: 80px; background: transparent;")
         brand_logo.setAlignment(Qt.AlignCenter)
         
-        brand_name = QLabel("ProStock")
+        brand_name = QLabel("Inventory")
         brand_name.setStyleSheet("color: white; font-size: 42px; font-weight: 800; background: transparent;")
+        brand_name.setAlignment(Qt.AlignCenter)
         
-        brand_sub = QLabel("Inventory Management Simplified.")
+        brand_sub = QLabel("Inventory Management System for you.")
         brand_sub.setStyleSheet("color: #9ca3af; font-size: 16px; background: transparent;")
         
         bg_layout.addWidget(brand_logo)
@@ -76,6 +77,21 @@ class LoginWindow(QWidget):
         self.password_input.setFixedHeight(45)
         self.password_input.setStyleSheet(self._input_style())
 
+        self.forgot_btn = QPushButton("Forgot password?")
+        self.forgot_btn.setStyleSheet("""
+            QPushButton {
+                color: #4f46e5;
+                font-size: 13px;
+                font-weight: bold;
+                background: transparent;
+                border: none;
+            }
+            QPushButton:hover { color: #4338ca; text-decoration: underline; }
+        """)
+        forgot_row = QHBoxLayout()
+        forgot_row.addStretch()  
+        forgot_row.addWidget(self.forgot_btn)
+
         # Sign In Button
         self.signin_btn = QPushButton("Sign In")
         self.signin_btn.setFixedHeight(45)
@@ -91,16 +107,23 @@ class LoginWindow(QWidget):
             QPushButton:hover { background-color: #4f46e5; }
         """)
 
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: bold; margin-top: 5px;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.error_label.hide()
+
         # Assemble Form
         form_layout.addWidget(welcome_lbl)
         form_layout.addWidget(instruction_lbl)
-        form_layout.addWidget(QLabel("Username")) # Optional label
+        form_layout.addWidget(QLabel("Username")) 
         form_layout.addWidget(self.username_input)
-        form_layout.addSpacing(15)
-        form_layout.addWidget(QLabel("Password")) # Optional label
+        form_layout.addSpacing(0)
+        form_layout.addWidget(QLabel("Password")) 
         form_layout.addWidget(self.password_input)
+        form_layout.addLayout(forgot_row)
         form_layout.addSpacing(25)
         form_layout.addWidget(self.signin_btn)
+        form_layout.addWidget(self.error_label)
 
         # Add both halves to main layout
         self.main_layout.addWidget(self.bg_frame, 1)    # Left takes 1 part
