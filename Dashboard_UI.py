@@ -1,11 +1,10 @@
 import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QFrame, QPushButton, QGridLayout, QSpacerItem, 
-    QSizePolicy, QStackedWidget, QLineEdit, QScrollArea
+    QLabel, QFrame, QPushButton, QStackedWidget, QMenu
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter, QFont
+from PySide6.QtGui import QAction, QFont
 
 # --- REUSABLE COMPONENTS ---
 
@@ -83,59 +82,6 @@ class StatMiniCard(QFrame):
         txt_lbl.setStyleSheet("font-size: 12px; color: #6b7280; font-weight: 500;")
         layout.addWidget(txt_lbl)
 
-class ItemCard(QFrame):
-    """Product Card component based on the wireframe design"""
-    def __init__(self, name, sku, stock):
-        super().__init__()
-        self.setFixedWidth(200)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border-radius: 12px;
-                border: 1px solid #e5e7eb;
-            }
-            QFrame:hover { border: 1px solid #6366f1; }
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        
-        img_placeholder = QFrame()
-        img_placeholder.setFixedHeight(120)
-        img_placeholder.setStyleSheet("background-color: #f3f4f6; border: 1px dashed #d1d5db; border-radius: 8px;")
-        img_layout = QVBoxLayout(img_placeholder)
-        img_lbl = QLabel("Product image")
-        img_lbl.setAlignment(Qt.AlignCenter)
-        img_lbl.setStyleSheet("color: #9ca3af; font-size: 11px; border: none;")
-        img_layout.addWidget(img_lbl)
-        layout.addWidget(img_placeholder)
-
-        name_lbl = QLabel(name)
-        name_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #111827; border: none;")
-        layout.addWidget(name_lbl)
-        
-        sku_lbl = QLabel(f"SKU: {sku}")
-        sku_lbl.setStyleSheet("font-size: 11px; color: #6b7280; border: none;")
-        layout.addWidget(sku_lbl)
-
-        stock_lbl = QLabel(f"Stock: {stock}")
-        stock_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #059669; border: none;")
-        layout.addWidget(stock_lbl)
-
-        detail_btn = QPushButton("View detail")
-        detail_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f9fafb;
-                color: #374151;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                padding: 6px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: #f3f4f6; }
-        """)
-        layout.addWidget(detail_btn)
-
 # --- MAIN DASHBOARD WINDOW ---
 
 class InventoryDashboard(QWidget):
@@ -157,9 +103,13 @@ class InventoryDashboard(QWidget):
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 30, 0, 30)
         
-        brand = QLabel(" 📦 ProStock")
-        brand.setStyleSheet("color: white; font-size: 20px; font-weight: 800; margin-bottom: 30px; padding-left: 20px;")
-        sidebar_layout.addWidget(brand)
+        brand_logo = QLabel(" 📦 ")
+        brand_logo.setStyleSheet("color: white; font-size: 35px; font-weight: 800; padding-left: 15px;")
+        sidebar_layout.addWidget(brand_logo, 0, Qt.AlignCenter)
+
+        brand_name = QLabel("INVENTORY")
+        brand_name.setStyleSheet("color: white; font-size: 20px; font-weight: 800; margin-bottom: 50px;")
+        sidebar_layout.addWidget(brand_name, 0, Qt.AlignCenter)
 
         self.nav_buttons = {}
         nav_links = [("📊 Dashboard", 0), ("📦 Item Info", 1), ("📈 Analytics", 2), ("⚙️ Settings", 3)]
@@ -179,120 +129,107 @@ class InventoryDashboard(QWidget):
             self.nav_buttons[index] = btn
 
         sidebar_layout.addStretch()
-
-        # User Profile Mini
-        user_box = QFrame()
-        user_box.setStyleSheet("background: #1f2937; border-top: 1px solid #374151;")
-        user_layout = QHBoxLayout(user_box)
-        avatar = QLabel("JD")
-        avatar.setFixedSize(32, 32)
-        avatar.setAlignment(Qt.AlignCenter)
-        avatar.setStyleSheet("background: #6366f1; color: white; border-radius: 16px; font-weight: bold; font-size: 10px;")
-        user_layout.addWidget(avatar)
-        user_info = QVBoxLayout(); user_info.addWidget(QLabel("John Doe")); user_info.addWidget(QLabel("Warehouse Mgr"))
-        user_layout.addLayout(user_info)
-        sidebar_layout.addWidget(user_box)
-
         self.outer_layout.addWidget(sidebar)
 
         # --- STACKED CONTENT AREA ---
         self.content_stack = QStackedWidget()
-        
-        # 1. Dashboard Page
         self.dashboard_page = QWidget()
         self._setup_dashboard_page()
         
-        # 2. Item Info Page
-        self.item_info_page = QWidget()
-        self._setup_item_info_page()
-
         self.content_stack.addWidget(self.dashboard_page)
-        self.content_stack.addWidget(self.item_info_page)
+        # Adding placeholders for other pages to avoid index errors
+        self.content_stack.addWidget(QLabel("Item Info Page Placeholder"))
+        self.content_stack.addWidget(QLabel("Analytics Page Placeholder"))
+        self.content_stack.addWidget(QLabel("Settings Page Placeholder"))
         
         self.outer_layout.addWidget(self.content_stack)
-        self.switch_page(0) # Start at Dashboard
-
-    def switch_page(self, index):
-        self.content_stack.setCurrentIndex(index)
-        for i, btn in self.nav_buttons.items():
-            if i == index:
-                btn.setStyleSheet("text-align: left; padding: 12px 25px; font-size: 13px; font-weight: 600; background-color: #1f2937; color: white; border-left: 4px solid #6366f1;")
-            else:
-                btn.setStyleSheet("text-align: left; padding: 12px 25px; font-size: 13px; font-weight: 500; color: #9ca3af; border: none; background: transparent;")
 
     def _setup_dashboard_page(self):
         layout = QVBoxLayout(self.dashboard_page)
         layout.setContentsMargins(35, 30, 35, 30)
-        layout.setSpacing(25)
+        layout.setSpacing(10)
         self.dashboard_page.setStyleSheet("background-color: #f9fafb;")
 
-        # Header
         header = QHBoxLayout()
-        title_v = QVBoxLayout()
-        t = QLabel("Dashboard"); t.setStyleSheet("color: #111827; font-size: 30px; font-weight: 700; border: none;")
-        s = QLabel("Welcome back, here is what's happening today."); s.setStyleSheet("color: #6b7280; font-size: 13px;")
-        title_v.addWidget(t); title_v.addWidget(s)
-        header.addLayout(title_v)
-        layout.addLayout(header)
+        t = QLabel("Dashboard")
+        t.setStyleSheet("color: #111827; font-size: 32px; font-weight: 700; border: none;")
+        header.addWidget(t)
+        header.addStretch()
+        header.addWidget(self.date_sorter())
 
-        # Stats
-        stats = QHBoxLayout(); stats.setSpacing(20)
+        # Line Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #e5e7eb; max-height: 1px;")
+
+        # Stats Row
+        stats = QHBoxLayout()
+        stats.setSpacing(20)
         stats.addWidget(StatMiniCard("📦", "Total Items", "1,284", "+2.5%"))
         stats.addWidget(StatMiniCard("⚠️", "Low Stock", "14 Items", "-5%"))
         stats.addWidget(StatMiniCard("🚚", "Incoming", "48 units", "+18%"))
-        layout.addLayout(stats)
 
-        # Chart Row
-        mid = QHBoxLayout(); mid.setSpacing(20)
-        chart = QFrame(); chart.setStyleSheet("background-color: white; border: 1px dashed #d1d5db; border-radius: 8px; min-height: 300px;")
-        mid.addWidget(DashboardCard("Inventory Movements", chart), 2)
+        # Content Row
+        mid = QHBoxLayout()
+        mid.setSpacing(20)
+        chart_placeholder = QFrame()
+        chart_placeholder.setStyleSheet("background-color: white; border: 1px dashed #d1d5db; border-radius: 8px; min-height: 300px;")
+        mid.addWidget(DashboardCard("Inventory Movements", chart_placeholder), 2)
         
         act = DashboardCard("Quick Actions")
         act_l = QVBoxLayout()
         for a in ["Print Barcodes", "Generate Cycle Count", "Export CSV"]:
-            b = QPushButton(a); b.setStyleSheet("text-align: left; padding: 10px; color: #374151; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 5px;")
+            b = QPushButton(a)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("text-align: left; padding: 10px; color: #374151; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 5px;")
             act_l.addWidget(b)
-        act.layout().addLayout(act_l)
+        
+        # Access the layout of the DashboardCard
+        container = QWidget()
+        container.setLayout(act_l)
+        act.layout().addWidget(container)
         mid.addWidget(act, 1)
-        layout.addLayout(mid)
 
-    def _setup_item_info_page(self):
-        layout = QVBoxLayout(self.item_info_page)
-        layout.setContentsMargins(35, 30, 35, 30)
-        self.item_info_page.setStyleSheet("background-color: #f9fafb;")
-
-        # Header Row (Title + Search/Filter)
-        header = QHBoxLayout()
-        title = QLabel("Item Information"); title.setStyleSheet("font-size: 28px; font-weight: 700; color: #111827;")
-        header.addWidget(title)
-        
-        search_box = QHBoxLayout()
-        search_input = QLineEdit(); search_input.setPlaceholderText("Search..."); search_input.setFixedWidth(200)
-        search_input.setStyleSheet("padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; background: white;")
-        sort_btn = QPushButton("Sort By ▽"); sort_btn.setStyleSheet("padding: 8px 15px; border: 1px solid #d1d5db; border-radius: 6px; background: white;")
-        search_box.addWidget(search_input); search_box.addWidget(sort_btn)
-        header.addLayout(search_box)
         layout.addLayout(header)
-        layout.addSpacing(20)
+        layout.addWidget(line)
+        layout.addSpacing(10)
+        layout.addLayout(stats)
+        layout.addLayout(mid)
+        layout.addStretch(1)
 
-        # Grid of Items in a Scroll Area
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setStyleSheet("border: none; background: transparent;")
-        grid_widget = QWidget(); grid_layout = QGridLayout(grid_widget)
-        grid_layout.setSpacing(20)
-        
-        dummy_items = [("Wireless Mouse", "WM-01", "50"), ("Keyboard", "KB-02", "12"), ("Monitor", "MN-03", "5"), ("USB Hub", "UH-04", "100"), ("Webcam", "WC-05", "25")]
-        for i, (n, s, st) in enumerate(dummy_items * 3): # Duplicate for scrolling
-            grid_layout.addWidget(ItemCard(n, s, st), i // 4, i % 4)
-            
-        scroll.setWidget(grid_widget)
-        layout.addWidget(scroll)
+    def date_sorter(self, default_text="Last 7 Days"):
+        date_btn = QPushButton(default_text)
+        date_btn.setCursor(Qt.PointingHandCursor)
+        date_btn.setFixedWidth(160)
+        date_btn.setStyleSheet("""
+            QPushButton {
+                background-color: white;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 12px;
+                font-weight: 600;
+                text-align: left;                   
+            } 
+            QPushButton:hover { background-color: #f9fafb; border-color: #4f46e5; }
+        """)   
 
-        # Bottom Bar
-        bottom = QHBoxLayout()
-        del_btn = QPushButton("🗑 Delete Item"); del_btn.setStyleSheet("color: #ef4444; font-weight: 600; border: none;")
-        add_btn = QPushButton("+ Add item"); add_btn.setStyleSheet("background: #6366f1; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 600;")
-        bottom.addWidget(del_btn); bottom.addStretch(); bottom.addWidget(add_btn)
-        layout.addLayout(bottom)
+        date_menu = QMenu(self)
+        options = ["Today", "Last 7 Days", "Last 30 Days", "Custom Range..."]
+        for opt in options:
+            action = QAction(opt, self)
+            action.triggered.connect(lambda checked=False, text=opt, b=date_btn: self._update_date_range(text, b))
+            date_menu.addAction(action)
+
+        date_btn.setMenu(date_menu)
+        return date_btn
+
+    def switch_page(self, index):
+        self.content_stack.setCurrentIndex(index)
+
+    def _update_date_range(self, text, button):
+        button.setText(text)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
