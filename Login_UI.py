@@ -93,7 +93,7 @@ class LoginWindow(QWidget):
         forgot_row.addWidget(self.forgot_btn)
 
         # Sign In Button
-        self.signin_btn = QPushButton("Sign In")
+        self.signin_btn = QPushButton("Log In")
         self.signin_btn.setFixedHeight(45)
         self.signin_btn.setCursor(Qt.PointingHandCursor)
         self.signin_btn.setStyleSheet("""
