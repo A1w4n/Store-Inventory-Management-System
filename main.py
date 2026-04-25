@@ -3,28 +3,28 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt
 
 from auth_service import AuthService
-
 from Login_UI import LoginWindow as UI_Base 
 from Dashboard_UI import InventoryDashboard
 
 class LoginWindow(UI_Base):
     def __init__(self, auth_service: AuthService):
-        # UI_Base already sets FramelessWindowHint and WA_TranslucentBackground
+        """
+        Extends the Login UI with logic to communicate with the AuthService.
+        """
         super().__init__() 
-        self.auth_service = auth_service  # The Backend instance
+        self.auth_service = auth_service
         
-        # We don't call _build_ui() again because super().__init__() already does.
-        # Calling it twice might create duplicate layouts.
+        # Connect the sign-in button from Login_UI to the handler
+        self.signin_btn.clicked.connect(self._handle_sign_in)
 
     def _handle_sign_in(self):
         """
-        The Bridge: UI collects data -> Backend processes -> UI displays result
+        The Bridge: Collects credentials, validates via Backend, and toggles UI.
         """
         username = self.username_input.text().strip()
         password = self.password_input.text().strip()
-        remember = self.remember_checkbox.isChecked()
 
-        # Validation logic using the UI components inherited from UI_Base
+        # Simple UI-side validation
         if not username:
             self._highlight_error(self.username_input)
             return
@@ -32,21 +32,22 @@ class LoginWindow(UI_Base):
             self._highlight_error(self.password_input)
             return
 
-        # Hand off data to the backend service
+        # Backend validation
         success, message = self.auth_service.validate_login(username, password)
 
         if success:
+            # On success, open the Dashboard
+            # Both windows are now 1240x820 for a seamless transition
             self.dashboard = InventoryDashboard()
             self.dashboard.show()
             self.close()
         else:
             QMessageBox.warning(self, "Login Failed", message)
-            # Use the inherited error highlighting
             self._highlight_error(self.username_input)
             self._highlight_error(self.password_input)
 
-    # Re-implementing the error highlight reset logic if not present in UI_Base
     def _highlight_error(self, widget):
+        """Applies error styling if fields are empty."""
         widget.setStyleSheet(widget.styleSheet() + """
             QLineEdit {
                 border: 2px solid #EF4444;
@@ -57,28 +58,30 @@ class LoginWindow(UI_Base):
         widget.textChanged.connect(lambda: self._reset_input(widget))
 
     def _reset_input(self, widget):
+        """Resets the input style to the standard slate theme."""
         widget.setStyleSheet("""
             QLineEdit {
-                background-color: #F9FAFB;
-                border: 1.5px solid #D1D5DB;
-                border-radius: 10px;
-                padding: 0 14px;
+                background-color: #f9fafb;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                padding: 0 12px;
                 font-size: 14px;
                 color: #111827;
             }
-            QLineEdit:focus { border: 2px solid #4F46E5; background-color: #ffffff; }
+            QLineEdit:focus { border: 2px solid #6366f1; background-color: white; }
         """)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # Set a global application style for consistency
     app.setStyle("Fusion")
     
-    # Instantiate backend first
-    # Ensure AuthService is defined in auth_service.py
+    # Initialize the backend service
     backend = AuthService()
     
-    # Pass backend into the UI
-    window = LoginWindow(backend)
-    # The window is set to fullScreen in UI_Base.__init__
-    window.show() 
+    # Start the application with the Login Window
+    login_screen = LoginWindow(backend)
+    login_screen.show()
+    
     sys.exit(app.exec())
