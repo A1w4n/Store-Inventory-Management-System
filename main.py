@@ -1,12 +1,14 @@
 import sys
 from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Signal
 
 from auth_service import AuthService
 from Login_UI import LoginWindow as UI_Base 
 from Dashboard_UI import InventoryDashboard
 
 class LoginWindow(UI_Base):
+    login_success_signal = Signal(str)
+
     def __init__(self, auth_service: AuthService):
         """
         Extends the Login UI with logic to communicate with the AuthService.
@@ -36,15 +38,13 @@ class LoginWindow(UI_Base):
         success, message = self.auth_service.validate_login(username, password)
 
         if success:
-            # On success, open the Dashboard
-            # Both windows are now 1240x820 for a seamless transition
-            self.dashboard = InventoryDashboard()
-            self.dashboard.show()
+            self.login_success_signal.emit(username)
             self.close()
         else:
-            QMessageBox.warning(self, "Login Failed", message)
-            self._highlight_error(self.username_input)
-            self._highlight_error(self.password_input)
+            self.error_label.setText(f"Unable to Login!")
+            self.error_label.show()
+            self.highlight_error(self.username_input)
+            self.highlight_error(self.password_input)
 
     def _highlight_error(self, widget):
         """Applies error styling if fields are empty."""
@@ -71,17 +71,27 @@ class LoginWindow(UI_Base):
             QLineEdit:focus { border: 2px solid #6366f1; background-color: white; }
         """)
 
+class AppController:
+    def __init__(self, auth_service: AuthService):
+        self.login_window = LoginWindow(auth_service)
+        self.dashboard_window = InventoryDashboard()
+
+        self.login_window.login_success_signal.connect(self.show_dashboard)
+        #self.dashboard_window.logout_signal.connect(self.show_login)
+        self.login_window.show()
+
+    def show_dashboard(self):
+        self.dashboard_window.show()
+
+    def show_login(self):
+        self.login_window.show()
+        self.dashboard_window.close()       
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Set a global application style for consistency
     app.setStyle("Fusion")
-    
-    # Initialize the backend service
     backend = AuthService()
-    
-    # Start the application with the Login Window
-    login_screen = LoginWindow(backend)
-    login_screen.show()
-    
+
+    controller = AppController(backend)
+
     sys.exit(app.exec())
