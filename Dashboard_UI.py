@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont
 
-# --- REUSABLE COMPONENTS ---
+from Item_info_UI import ItemInfoPage
 
 class DashboardCard(QFrame):
     def __init__(self, title, content_widget=None):
@@ -117,13 +117,7 @@ class InventoryDashboard(QWidget):
         for text, index in nav_links:
             btn = QPushButton(text)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet("""
-                QPushButton {
-                    text-align: left; padding: 12px 25px; font-size: 13px;
-                    font-weight: 500; color: #9ca3af; border: none; background: transparent;
-                }
-                QPushButton:hover { background-color: #1f2937; color: #ffffff; }
-            """)
+
             btn.clicked.connect(lambda checked=False, i=index: self.switch_page(i))
             sidebar_layout.addWidget(btn)
             self.nav_buttons[index] = btn
@@ -133,35 +127,55 @@ class InventoryDashboard(QWidget):
 
         # --- STACKED CONTENT AREA ---
         self.content_stack = QStackedWidget()
+        self.content_stack.setStyleSheet ("background-color : white;")
         self.dashboard_page = QWidget()
         self._setup_dashboard_page()
         
         self.content_stack.addWidget(self.dashboard_page)
         # Adding placeholders for other pages to avoid index errors
-        self.content_stack.addWidget(QLabel("Item Info Page Placeholder"))
+        self.item_info_page = ItemInfoPage()
+        self.content_stack.insertWidget(1, self.item_info_page)
         self.content_stack.addWidget(QLabel("Analytics Page Placeholder"))
         self.content_stack.addWidget(QLabel("Settings Page Placeholder"))
         
         self.outer_layout.addWidget(self.content_stack)
 
+        self.switch_page(0)
+
     def _setup_dashboard_page(self):
         layout = QVBoxLayout(self.dashboard_page)
         layout.setContentsMargins(35, 30, 35, 30)
         layout.setSpacing(10)
-        self.dashboard_page.setStyleSheet("background-color: #f9fafb;")
+        self.dashboard_page.setStyleSheet("background-color: #ffffff;")
 
-        header = QHBoxLayout()
+        # Title
+        title = QHBoxLayout()
         t = QLabel("Dashboard")
-        t.setStyleSheet("color: #111827; font-size: 32px; font-weight: 700; border: none;")
-        header.addWidget(t)
-        header.addStretch()
-        header.addWidget(self.date_sorter())
+        t.setStyleSheet("color: #111827; font-size: 40px; font-weight: 700; border: none;")
+        title.addWidget(t)
+        title.addStretch()
 
         # Line Separator
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #e5e7eb; max-height: 1px;")
+        line.setStyleSheet("background-color: #111827; max-height: 10px;")
 
+        # Date sorter with label
+        sorter_row = QHBoxLayout()
+        sorter_row.addStretch()
+        lbl = QLabel("Data retrieved for")
+        lbl.setStyleSheet("color: #374151; font-size: 13px; font-weight: 500;")
+        sorter_row.addWidget(lbl)
+        sorter_row.addSpacing(10)
+        sorter_row.addWidget(self.date_sorter())
+
+        # Header
+        header = QHBoxLayout()
+        t = QLabel("Status:")
+        t.setStyleSheet("color: #111827; font-size: 25px; font-weight: 700; border: none;")
+        header.addWidget(t)
+        header.addStretch()
+        
         # Stats Row
         stats = QHBoxLayout()
         stats.setSpacing(20)
@@ -170,11 +184,11 @@ class InventoryDashboard(QWidget):
         stats.addWidget(StatMiniCard("🚚", "Incoming", "48 units", "+18%"))
 
         # Content Row
-        mid = QHBoxLayout()
-        mid.setSpacing(20)
+        graph = QHBoxLayout()
+        graph.setSpacing(20)
         chart_placeholder = QFrame()
         chart_placeholder.setStyleSheet("background-color: white; border: 1px dashed #d1d5db; border-radius: 8px; min-height: 300px;")
-        mid.addWidget(DashboardCard("Inventory Movements", chart_placeholder), 2)
+        graph.addWidget(DashboardCard("Inventory Movements", chart_placeholder), 2)
         
         act = DashboardCard("Quick Actions")
         act_l = QVBoxLayout()
@@ -188,20 +202,23 @@ class InventoryDashboard(QWidget):
         container = QWidget()
         container.setLayout(act_l)
         act.layout().addWidget(container)
-        mid.addWidget(act, 1)
+        graph.addWidget(act, 1)
 
-        layout.addLayout(header)
+        # Layout of the Dashboard card
+        layout.addLayout(title)
         layout.addWidget(line)
+        layout.addLayout(sorter_row)
+        layout.addLayout(header)
         layout.addSpacing(10)
+        layout.addLayout(graph)
         layout.addLayout(stats)
-        layout.addLayout(mid)
         layout.addStretch(1)
 
     def date_sorter(self, default_text="Last 7 Days"):
-        date_btn = QPushButton(default_text)
-        date_btn.setCursor(Qt.PointingHandCursor)
-        date_btn.setFixedWidth(160)
-        date_btn.setStyleSheet("""
+        dateSorter_btn = QPushButton(default_text)
+        dateSorter_btn.setCursor(Qt.PointingHandCursor)
+        dateSorter_btn.setFixedWidth(160)
+        dateSorter_btn.setStyleSheet("""
             QPushButton {
                 background-color: white;
                 color: #374151;
@@ -215,22 +232,59 @@ class InventoryDashboard(QWidget):
             QPushButton:hover { background-color: #f9fafb; border-color: #4f46e5; }
         """)   
 
-        date_menu = QMenu(self)
+        dateSorter_menu = QMenu(dateSorter_btn)
+        dateSorter_menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 8px 25px;
+                background-color: transparent;
+            }
+            QMenu::item:selected {
+                background-color: #4f46e5;
+                color: white;
+                border-radius: 2px;
+            }
+        """)
         options = ["Today", "Last 7 Days", "Last 30 Days", "Custom Range..."]
         for opt in options:
             action = QAction(opt, self)
-            action.triggered.connect(lambda checked=False, text=opt, b=date_btn: self._update_date_range(text, b))
-            date_menu.addAction(action)
+            action.triggered.connect(lambda checked=False, text=opt, b=dateSorter_btn: self._update_date_range(text, b))
+            dateSorter_menu.addAction(action)
 
-        date_btn.setMenu(date_menu)
-        return date_btn
+        dateSorter_btn.setMenu(dateSorter_menu)
+        return dateSorter_btn
 
     def switch_page(self, index):
         self.content_stack.setCurrentIndex(index)
+    
+        for btn_index, btn in self.nav_buttons.items():
+            if btn_index == index:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        text-align: left; padding: 12px 40px; font-size: 13px;
+                        font-weight: 600; color: #ffffff; border: none; 
+                        background-color: #1f2937;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        text-align: left; padding: 12px 25px; font-size: 13px;
+                        font-weight: 500; color: #9ca3af; border: none; background: transparent;
+                    }
+                    QPushButton:hover { background-color: #1f2937; color: #ffffff; }
+                """)
 
     def _update_date_range(self, text, button):
         button.setText(text)
 
+# Initialize UI
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
