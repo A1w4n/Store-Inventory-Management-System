@@ -1,209 +1,220 @@
 import sys
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QFrame, QPushButton, QGridLayout, QLineEdit, 
-    QScrollArea, QSizePolicy, QApplication
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QApplication,  
+    QLineEdit, QPushButton, QScrollArea, QFrame, QMenu, QStackedWidget, QGridLayout
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QAction
 
-# --- DASHBOARD-INSPIRED COMPONENTS ---
-
-class InventoryHeader(QFrame):
-    """Aligned with the Dashboard title style"""
-    def __init__(self, title, subtitle):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 10)
-        
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet("color: #111827; font-size: 30px; font-weight: 700; border: none;")
-        
-        subtitle_lbl = QLabel(subtitle)
-        subtitle_lbl.setStyleSheet("color: #6b7280; font-size: 13px; border: none;")
-        
-        layout.addWidget(title_lbl)
-        layout.addWidget(subtitle_lbl)
-
-class SearchFilterBar(QFrame):
-    """Dashboard-style search and sort controls"""
+class ItemRow(QFrame):
+    # For List
     def __init__(self):
         super().__init__()
+        self.setFixedHeight(80)
+        self.setStyleSheet("""
+            QFrame { background-color: white; border-radius: 10px; border: 1px solid #e5e7eb; }
+            QFrame:hover { border: 1px solid #10b981; }
+        """)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        img = QFrame(); img.setFixedSize(60, 60)
+        img.setStyleSheet("background-color: #f9fafb; border: 1px dashed #d1d5db; border-radius: 6px;")
+        layout.addWidget(img)
         
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search inventory...")
-        self.search_input.setFixedWidth(250)
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #ffffff;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
-                padding: 10px 15px;
-                color: #111827;
-            }
-            QLineEdit:focus { border: 2px solid #6366f1; }
-        """)
+        info = QVBoxLayout()
+        t = QFrame(); t.setFixedSize(150, 12); t.setStyleSheet("background-color: #f3f4f6; border-radius: 4px;")
+        d = QFrame(); d.setFixedSize(100, 10); d.setStyleSheet("background-color: #f9fafb; border-radius: 4px;")
+        info.addWidget(t); info.addWidget(d)
+        layout.addLayout(info); layout.addStretch()
         
-        self.sort_btn = QPushButton("Sort By ▽")
-        self.sort_btn.setCursor(Qt.PointingHandCursor)
-        self.sort_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
-                padding: 10px 20px;
-                color: #374151;
-                font-weight: 500;
-            }
-            QPushButton:hover { background-color: #f9fafb; }
-        """)
-        
-        layout.addWidget(self.search_input)
-        layout.addWidget(self.sort_btn)
-        layout.addStretch()
+        btn = QPushButton("⋮")
+        btn.setFixedSize(30, 30)
+        btn.setStyleSheet("border: none; font-size: 18px; color: #6b7280;")
+        layout.addWidget(btn)
 
 class ItemCard(QFrame):
-    """Redesigned to match DashboardCard aesthetics"""
-    def __init__(self, name, sku, stock):
+    # For Grid
+    def __init__(self):
         super().__init__()
+        self.setFixedSize(180, 220)
         self.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border-radius: 12px;
-                border: 1px solid #e5e7eb;
-            }
-            QFrame:hover {
-                border: 1px solid #6366f1;
-            }
+            QFrame { background-color: white; border-radius: 12px; border: 1px solid #e5e7eb; }
+            QFrame:hover { border: 1px solid #10b981; }
         """)
-        
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
-
-        # Dashboard-style Image Placeholder
-        self.img_placeholder = QFrame()
-        self.img_placeholder.setFixedHeight(140)
-        self.img_placeholder.setStyleSheet("""
-            background-color: #f3f4f6;
-            border: 1px dashed #d1d5db;
-            border-radius: 8px;
-        """)
-        img_layout = QVBoxLayout(self.img_placeholder)
-        img_lbl = QLabel("Product Image")
-        img_lbl.setStyleSheet("color: #9ca3af; font-size: 11px; border: none;")
-        img_layout.addWidget(img_lbl, 0, Qt.AlignCenter)
-        layout.addWidget(self.img_placeholder)
-
-        # Text Details
-        name_lbl = QLabel(name)
-        name_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #111827; border: none;")
+        img = QFrame(); img.setStyleSheet("background-color: #f9fafb; border: 1px dashed #d1d5db; border-radius: 8px;")
+        layout.addWidget(img, 3)
         
-        sku_lbl = QLabel(f"SKU: {sku}")
-        sku_lbl.setStyleSheet("font-size: 11px; color: #6b7280; border: none;")
+        t = QFrame(); t.setFixedHeight(12); t.setStyleSheet("background-color: #f3f4f6; border-radius: 4px;")
+        d = QFrame(); d.setFixedHeight(10); d.setStyleSheet("background-color: #f9fafb; border-radius: 4px;")
+        layout.addWidget(t); layout.addWidget(d)
         
-        stock_lbl = QLabel(f"Stock Level: {stock}")
-        stock_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #059669; border: none;")
-
-        layout.addWidget(name_lbl)
-        layout.addWidget(sku_lbl)
-        layout.addWidget(stock_lbl)
-
-        # View Detail Button (Dashboard Style)
-        detail_btn = QPushButton("Manage Item")
-        detail_btn.setCursor(Qt.PointingHandCursor)
-        detail_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f3f4f6;
-                color: #4b5563;
-                border-radius: 6px;
-                padding: 8px;
-                font-size: 11px;
-                font-weight: 600;
-                border: 1px solid #d1d5db;
-            }
-            QPushButton:hover { background-color: #e5e7eb; color: #111827; }
-        """)
-        layout.addWidget(detail_btn)
+        btn = QPushButton("View Detail")
+        btn.setStyleSheet("background: #f3f4f6; color: #4b5563; font-size: 11px; font-weight: bold; padding: 5px; border-radius: 4px; border: none;")
+        layout.addWidget(btn)
 
 class ItemInfoPage(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("background-color: #f9fafb;")
-        self._build_ui()
-
-    def _build_ui(self):
+        self.setStyleSheet("background-color: #ffffff;")
+        self.current_mode = "list"
+        
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(35, 30, 35, 30)
         main_layout.setSpacing(20)
 
-        # 1. Header (Title & Subtitle)
-        self.header = InventoryHeader(
-            "Item Information", 
-            "Manage and track your warehouse stock levels"
-        )
-        main_layout.addWidget(self.header)
+        # 1. HEADER with Toggle Button
+        header = QHBoxLayout()
+        title = QLabel("Item Information")
+        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #1e293b;")
+        header.addWidget(title)
+        header.addStretch()
 
-        # 2. Search and Filter Bar
-        self.controls = SearchFilterBar()
-        main_layout.addWidget(self.controls)
-
-        # 3. Exclusive Feature: Scrollable Grid Area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
-        
-        grid_container = QWidget()
-        grid_container.setStyleSheet("background-color: transparent;")
-        self.grid_layout = QGridLayout(grid_container)
-        self.grid_layout.setSpacing(20)
-        self.grid_layout.setContentsMargins(0, 5, 5, 5)
-
-        # Sample Data
-        items = [
-            ("Wireless Mouse", "WM-001", "45"), ("Mechanical Keyboard", "KB-502", "12"),
-            ("USB-C Hub", "UH-99", "120"), ("Monitor Stand", "MS-10", "8"),
-            ("Webcam HD", "WC-202", "30"), ("Laptop Cooling Pad", "CP-05", "15")
-        ]
-
-        for i, (name, sku, stock) in enumerate(items * 2): # Duplicated for scroll testing
-            card = ItemCard(name, sku, stock)
-            self.grid_layout.addWidget(card, i // 4, i % 4)
-
-        scroll.setWidget(grid_container)
-        main_layout.addWidget(scroll)
-
-        # 4. Bottom Action Bar
-        bottom_bar = QHBoxLayout()
-        
-        del_btn = QPushButton("🗑 Delete Item")
-        del_btn.setStyleSheet("color: #ef4444; font-weight: 600; border: none; background: transparent; font-size: 13px;")
-        
-        add_btn = QPushButton("+ Add New Item")
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #6366f1;
-                color: white;
-                padding: 12px 25px;
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 13px;
+        # Grid/List Switch
+        self.toggle_btn = QPushButton("Grid View")
+        self.toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_btn.setStyleSheet("""
+            QPushButton { 
+                background: #f3f4f6; padding: 8px 15px; border-radius: 6px; 
+                font-weight: bold; color: #374151; border: 1px solid #d1d5db;
             }
-            QPushButton:hover { background-color: #4f46e5; }
+            QPushButton:hover { background: #e5e7eb; }
+        """)
+        self.toggle_btn.clicked.connect(self.switch_view)
+        header.addWidget(self.toggle_btn)
+        header.setSpacing(10)
+        
+        # Search pad
+        search = QLineEdit()
+        search.setPlaceholderText("Search items...")
+        search.setFixedWidth(200)
+        search.setStyleSheet("""
+            QLineEdit {
+                padding: 10px; 
+                border-radius: 8px; 
+                border: 1px solid #d1d5db;
+                background-color: white;
+                color: #111827; /* Sets the color of text you type */
+            }
+            QLineEdit::placeholder {
+                color: #9ca3af; 
+            }
+        """)
+        header.addWidget(search)
+        header.setSpacing(10)
+
+        # Item Sorter button
+        header.addWidget(self.item_sorter())
+
+        # 2. VIEW STACK (The area that changes)
+        self.view_stack = QStackedWidget()
+        
+        # Create List View
+        list_scroll = QScrollArea()
+        list_scroll.setWidgetResizable(True)
+        list_scroll.setStyleSheet("border: none; background: transparent;")
+        list_container = QWidget()
+        self.list_layout = QVBoxLayout(list_container)
+        self.list_layout.setAlignment(Qt.AlignTop)
+        self.list_layout.setSpacing(12)
+        for _ in range(15): self.list_layout.addWidget(ItemRow())
+        list_scroll.setWidget(list_container)
+        
+        # Create Grid View
+        grid_scroll = QScrollArea()
+        grid_scroll.setWidgetResizable(True)
+        grid_scroll.setStyleSheet("border: none; background: transparent;")
+        grid_container = QWidget()
+        self.grid_layout = QGridLayout(grid_container)
+        self.grid_layout.setAlignment(Qt.AlignTop)
+        self.grid_layout.setSpacing(20)
+        for i in range(15): self.grid_layout.addWidget(ItemCard(), i // 4, i % 4)
+        grid_scroll.setWidget(grid_container)
+
+        # 3. FIXED FOOTER
+        footer = QFrame()
+        footer.setFixedHeight(70)
+        footer.setStyleSheet("QFrame { background-color: white; border-radius: 12px; border: 1px solid #e5e7eb; }")
+        footer_layout = QHBoxLayout(footer)
+        del_btn = QPushButton("Delete Item")
+        del_btn.setStyleSheet("color : #FF3737; font-weight: bold; padding: 10px 20px; border: none;")
+        add_btn = QPushButton("Add Item")
+        add_btn.setStyleSheet("color: #10b981; font-weight: bold; padding: 10px 20px; border: none;")
+        
+
+        # Layout
+        main_layout.addLayout(header)
+        self.view_stack.addWidget(list_scroll) # Index 0
+        self.view_stack.addWidget(grid_scroll) # Index 1
+        main_layout.addWidget(self.view_stack)
+        footer_layout.addWidget(del_btn)
+        footer_layout.addWidget(add_btn)
+        footer_layout.addStretch()
+        main_layout.addWidget(footer)
+
+    def switch_view(self):
+        if self.current_mode == "list":
+            self.view_stack.setCurrentIndex(1)
+            self.toggle_btn.setText("List View")
+            self.current_mode = "grid"
+        else:
+            self.view_stack.setCurrentIndex(0)
+            self.toggle_btn.setText("Grid View")
+            self.current_mode = "list"
+
+    def item_sorter(self, default_text="Sort by..."):
+        itemSorter_btn = QPushButton(default_text)
+        itemSorter_btn.setCursor(Qt.PointingHandCursor)
+        itemSorter_btn.setFixedWidth(150)
+        itemSorter_btn.setStyleSheet("""
+            QPushButton {
+                background-color: white;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 8px 15px;
+                font-size: 12px;
+                font-weight: 600;                     
+                text-align: center;                                       
+            } 
+            QPushButton:hover { background-color: #f9fafb; border-color: #4f46e5; }
+            QPushButton::menu-indicator { image: none; }                         
+        """)   
+
+        itemSorter_menu = QMenu(itemSorter_btn)
+        itemSorter_menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 8px 25px;
+                background-color: transparent;
+            }
+            QMenu::item:selected {
+                background-color: #4f46e5;
+                color: white;
+                border-radius: 2px;
+            }
         """)
 
-        bottom_bar.addWidget(del_btn)
-        bottom_bar.addStretch()
-        bottom_bar.addWidget(add_btn)
-        main_layout.addLayout(bottom_bar)
+        options = ["By name (Alphabetical)", "By time added", "By Quantity", "By Saleability"]
+        for opt in options:
+            action = QAction(opt, self)
+            action.triggered.connect(lambda checked=False, text=opt, b=itemSorter_btn: self._update_date_range(text, b))
+            itemSorter_menu.addAction(action)
+
+        itemSorter_btn.setMenu(itemSorter_menu)
+        return itemSorter_btn
+    
+    def _update_date_range(self, text, button):
+        button.setText(text)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setFont(QFont("Segoe UI", 10))
+    app.setStyle("Fusion")
     window = ItemInfoPage()
-    window.resize(1000, 700)
     window.show()
     sys.exit(app.exec())
