@@ -107,7 +107,42 @@ class ItemInfoPage(QWidget):
 
         # 2. VIEW STACK (The area that changes)
         self.view_stack = QStackedWidget()
-        
+
+        # List Legend
+        list_view_page = QWidget()
+        list_page_layout = QVBoxLayout(list_view_page)
+        list_page_layout.setContentsMargins(0, 0, 0, 0)
+        list_page_layout.setSpacing(0) 
+        legend_panel = QFrame()
+        legend_panel.setFixedHeight(40) 
+        legend_panel.setStyleSheet("""
+            QFrame { background-color: #f8fafc; border-bottom: 1px solid #e5e7eb; }
+            QLabel { color: #64748b; font-weight: bold; font-size: 11px; }
+        """)
+        legend_layout = QHBoxLayout(legend_panel)
+        legend_layout.setContentsMargins(20, 0, 20, 0)
+        legend_layout.addSpacing(60) # Accounts for the image in the row
+        legend_layout.addWidget(QLabel("PRODUCT NAME"), 2)
+        legend_layout.addWidget(QLabel("PRICE"), 1)
+        legend_layout.addWidget(QLabel("STOCK"), 1)
+        legend_layout.addWidget(QLabel("SOLD"), 1)
+        legend_layout.addSpacing(40) 
+        list_page_layout.addWidget(legend_panel)
+
+        # 3. The Scroll Panel 
+        list_scroll = QScrollArea()
+        list_scroll.setWidgetResizable(True)
+        list_scroll.setStyleSheet("border: none; background: transparent;")
+        list_container = QWidget()
+        self.list_layout = QVBoxLayout(list_container)
+        self.list_layout.setAlignment(Qt.AlignTop)
+        self.list_layout.setSpacing(12)
+        for _ in range(15): 
+            self.list_layout.addWidget(ItemRow())
+        list_scroll.setWidget(list_container)
+        list_page_layout.addWidget(list_scroll)
+        self.view_stack.addWidget(list_view_page)
+
         # Create List View
         list_scroll = QScrollArea()
         list_scroll.setWidgetResizable(True)
@@ -139,16 +174,18 @@ class ItemInfoPage(QWidget):
         del_btn.setStyleSheet("color : #FF3737; font-weight: bold; padding: 10px 20px; border: none;")
         add_btn = QPushButton("Add Item")
         add_btn.setStyleSheet("color: #10b981; font-weight: bold; padding: 10px 20px; border: none;")
+        refresh_btn = QPushButton("Refresh Page")
+        refresh_btn.setStyleSheet("color: grey; font-weight: bold; padding: 10px 20px; border: none;")
         
-
         # Layout
         main_layout.addLayout(header)
-        self.view_stack.addWidget(list_scroll) # Index 0
+        self.view_stack.addWidget(list_view_page) # Index 0
         self.view_stack.addWidget(grid_scroll) # Index 1
         main_layout.addWidget(self.view_stack)
         footer_layout.addWidget(del_btn)
         footer_layout.addWidget(add_btn)
         footer_layout.addStretch()
+        footer_layout.addWidget(refresh_btn)
         main_layout.addWidget(footer)
 
     def switch_view(self):
@@ -200,7 +237,7 @@ class ItemInfoPage(QWidget):
             }
         """)
 
-        options = ["By name (Alphabetical)", "By time added", "By Quantity", "By Saleability"]
+        options = ["By name (Alphabetical)", "By time added", "By Price","By Quantity", "By Saleability"]
         for opt in options:
             action = QAction(opt, self)
             action.triggered.connect(lambda checked=False, text=opt, b=itemSorter_btn: self._update_date_range(text, b))
