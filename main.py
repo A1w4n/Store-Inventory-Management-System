@@ -3,8 +3,9 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Signal
 
 from auth_service import AuthService
-from Login_UI import LoginWindow as UI_Base 
+from Login_UI import LoginWindow as UI_Base
 from Dashboard_UI import InventoryDashboard
+from database import InventoryDatabase
 
 class LoginWindow(UI_Base):
     login_success_signal = Signal(str)
@@ -72,9 +73,11 @@ class LoginWindow(UI_Base):
         """)
 
 class AppController:
-    def __init__(self, auth_service: AuthService):
+    def __init__(self, auth_service: AuthService, db: InventoryDatabase):
+        self.auth_service = auth_service
+        self.db = db
         self.login_window = LoginWindow(auth_service)
-        self.dashboard_window = InventoryDashboard()
+        self.dashboard_window = InventoryDashboard(db)
 
         self.login_window.login_success_signal.connect(self.show_dashboard)
         #self.dashboard_window.logout_signal.connect(self.show_login)
@@ -90,8 +93,11 @@ class AppController:
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    backend = AuthService()
 
-    controller = AppController(backend)
+    # Initialize database and auth service
+    db = InventoryDatabase()
+    backend = AuthService(db_path="inventory.db")
+
+    controller = AppController(backend, db)
 
     sys.exit(app.exec())
