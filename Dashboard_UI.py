@@ -1,12 +1,13 @@
 import sys
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton, QStackedWidget, QMenu
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont
 
 from Item_info_UI import ItemInfoPage
+from database import InventoryDatabase
 
 class DashboardCard(QFrame):
     def __init__(self, title, content_widget=None):
@@ -85,8 +86,9 @@ class StatMiniCard(QFrame):
 # --- MAIN DASHBOARD WINDOW ---
 
 class InventoryDashboard(QWidget):
-    def __init__(self):
+    def __init__(self, db=None):
         super().__init__()
+        self.db = db or InventoryDatabase()
         self.setWindowTitle("ProStock | Inventory Management")
         self.resize(1240, 820)
         self._build_ui()
@@ -112,7 +114,7 @@ class InventoryDashboard(QWidget):
         sidebar_layout.addWidget(brand_name, 0, Qt.AlignCenter)
 
         self.nav_buttons = {}
-        nav_links = [("📊 Dashboard", 0), ("📦 Item Info", 1), ("📈 Analytics", 2), ("⚙️ Settings", 3)]
+        nav_links = [("📊 Dashboard", 0), ("📦 Item Info", 1), ("📈 Analytics", 2), ("About", 3),("⚙️ Settings", 4)]
         
         for text, index in nav_links:
             btn = QPushButton(text)
@@ -176,12 +178,18 @@ class InventoryDashboard(QWidget):
         header.addWidget(t)
         header.addStretch()
         
+        # Get stats from database
+        db_stats = self.db.get_dashboard_stats()
+
         # Stats Row
         stats = QHBoxLayout()
         stats.setSpacing(20)
-        stats.addWidget(StatMiniCard("📦", "Total Items", "1,284", "+2.5%"))
-        stats.addWidget(StatMiniCard("⚠️", "Low Stock", "14 Items", "-5%"))
-        stats.addWidget(StatMiniCard("🚚", "Incoming", "48 units", "+18%"))
+        stats.addWidget(StatMiniCard("📦", "Total Items",
+                                     str(db_stats['total_items']), "+2.5%"))
+        stats.addWidget(StatMiniCard("⚠️", "Low Stock",
+                                     f"{db_stats['low_stock_items']} Items", "-5%"))
+        stats.addWidget(StatMiniCard("🚚", "Sold Today",
+                                     f"{db_stats['units_sold_today']} units", "+18%"))
 
         # Content Row
         graph = QHBoxLayout()
