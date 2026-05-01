@@ -1,10 +1,15 @@
 import sys
+from datetime import datetime, timedelta
+from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton, QStackedWidget, QMenu
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QFont, QPixmap
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 from Item_info_UI import ItemInfoPage
 from database import InventoryDatabase
@@ -17,19 +22,20 @@ class DashboardCard(QFrame):
             QFrame#card {
                 background-color: #ffffff;
                 border-radius: 8px;
-                border: 1px solid #e5e7eb; 
+                border: 1px solid #e5e7eb;
             }
             QLabel { color: #111827; border: none; }
         """)
-        
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(0)
+
         header = QHBoxLayout()
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet("font-size: 15px; font-weight: 600; color: #374151;")
         header.addWidget(title_lbl)
-        
+
         detail_btn = QPushButton("Manage")
         detail_btn.setCursor(Qt.PointingHandCursor)
         detail_btn.setStyleSheet("""
@@ -46,13 +52,13 @@ class DashboardCard(QFrame):
         """)
         header.addWidget(detail_btn, 0, Qt.AlignRight)
         layout.addLayout(header)
-        
+
         if content_widget:
             layout.addSpacing(10)
             layout.addWidget(content_widget)
 
 class StatMiniCard(QFrame):
-    def __init__(self, icon, label, value, trend="+12%"):
+    def __init__(self, icon, label, value, trend="+12%", trend_color=None):
         super().__init__()
         self.setStyleSheet("""
             QFrame {
@@ -64,24 +70,96 @@ class StatMiniCard(QFrame):
         """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
-        
+
         header = QHBoxLayout()
         icon_lbl = QLabel(icon)
         icon_lbl.setStyleSheet("font-size: 18px; color: #6366f1;")
         header.addWidget(icon_lbl)
-        
+
         trend_lbl = QLabel(trend)
-        trend_lbl.setStyleSheet("color: #059669; font-size: 10px; font-weight: bold; background: #ecfdf5; padding: 2px 6px; border-radius: 10px;")
+        if trend_color is None:
+            trend_color = "#059669"  # default green
+        trend_lbl.setStyleSheet(f"color: white; font-size: 10px; font-weight: bold; background: {trend_color}; padding: 2px 6px; border-radius: 10px;")
         header.addWidget(trend_lbl, 0, Qt.AlignRight)
         layout.addLayout(header)
-        
+
         val_lbl = QLabel(value)
         val_lbl.setStyleSheet("font-size: 20px; font-weight: 700; color: #111827;")
         layout.addWidget(val_lbl)
-        
+
         txt_lbl = QLabel(label)
         txt_lbl.setStyleSheet("font-size: 12px; color: #6b7280; font-weight: 500;")
         layout.addWidget(txt_lbl)
+
+class BestSellerWidget(QFrame):
+    def __init__(self, best_seller_data=None, saleability_increase=0):
+        super().__init__()
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border-radius: 8px;
+                border: 1px solid #e5e7eb;
+            }
+            QLabel { border: none; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        if best_seller_data:
+            item_id, item_name, price, quantity, image_path, total_sold = best_seller_data
+        else:
+            item_name = "No Data"
+            price = 0
+            quantity = 0
+            image_path = None
+            total_sold = 0
+
+        # Header with title and saleability badge
+        header = QHBoxLayout()
+        title_lbl = QLabel("⭐ Best Seller")
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #111827;")
+        header.addWidget(title_lbl)
+
+        increase_color = "#10b981" if saleability_increase >= 0 else "#ef4444"
+        increase_sign = "+" if saleability_increase >= 0 else ""
+        trend_lbl = QLabel(f"{increase_sign}{int(saleability_increase)}%")
+        trend_lbl.setStyleSheet(f"color: white; font-size: 10px; font-weight: bold; background: {increase_color}; padding: 2px 6px; border-radius: 10px;")
+        header.addWidget(trend_lbl, 0, Qt.AlignRight)
+        layout.addLayout(header)
+
+        # Image
+        if image_path and Path(image_path).exists():
+            img = QPixmap(image_path)
+            img_label = QLabel()
+            img_label.setPixmap(img.scaledToWidth(120, Qt.SmoothTransformation))
+            img_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(img_label)
+        else:
+            placeholder = QLabel("📦")
+            placeholder.setStyleSheet("font-size: 40px; text-align: center;")
+            placeholder.setAlignment(Qt.AlignCenter)
+            layout.addWidget(placeholder)
+
+        # Item Name
+        name_lbl = QLabel(item_name)
+        name_lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
+        name_lbl.setWordWrap(True)
+        layout.addWidget(name_lbl)
+
+        # Price and Stock Row
+        price_stock = QHBoxLayout()
+        price_lbl = QLabel(f"Php {price:.2f}")
+        price_lbl.setStyleSheet("font-size: 12px; color: #10b981; font-weight: 600;")
+        price_stock.addWidget(price_lbl)
+        price_stock.addStretch()
+
+        stock_lbl = QLabel(f"Stock: {quantity}")
+        stock_lbl.setStyleSheet("font-size: 11px; color: #6b7280;")
+        price_stock.addWidget(stock_lbl)
+        layout.addLayout(price_stock)
+
+        layout.addStretch()
 
 # --- MAIN DASHBOARD WINDOW ---
 
@@ -91,6 +169,11 @@ class InventoryDashboard(QWidget):
         self.db = db or InventoryDatabase()
         self.setWindowTitle("ProStock | Inventory Management")
         self.resize(1240, 820)
+        self.chart_widget = None
+        self.best_seller_widget = None
+        self.alerts_layout = None
+        self.stats_layout = None
+        self.date_range_days = 7
         self._build_ui()
 
     def _build_ui(self):
@@ -146,8 +229,8 @@ class InventoryDashboard(QWidget):
 
     def _setup_dashboard_page(self):
         layout = QVBoxLayout(self.dashboard_page)
-        layout.setContentsMargins(35, 30, 35, 30)
-        layout.setSpacing(10)
+        layout.setContentsMargins(35, 30, 35, 15)
+        layout.setSpacing(8)
         self.dashboard_page.setStyleSheet("background-color: #ffffff;")
 
         # Title
@@ -177,27 +260,64 @@ class InventoryDashboard(QWidget):
         t.setStyleSheet("color: #111827; font-size: 25px; font-weight: 700; border: none;")
         header.addWidget(t)
         header.addStretch()
-        
+
         # Get stats from database
         db_stats = self.db.get_dashboard_stats()
 
-        # Stats Row
+        # Calculate dynamic trends
+        item_count_trend = self.db.get_item_count_trend(self.date_range_days)
+        low_stock_count, avg_threshold = self.db.get_low_stock_status()
+        sales_trend = self.db.get_sales_trend(self.date_range_days)
+        saleability_increase = self.db.get_saleability_increase(self.date_range_days)
+
+        # Determine colors based on data
+        item_trend_color = "#10b981" if item_count_trend >= 0 else "#ef4444"
+        item_trend_sign = "+" if item_count_trend >= 0 else ""
+
+        low_stock_color = "#ef4444" if low_stock_count > 0 else "#10b981"
+        low_stock_trend = f"{low_stock_count} High" if low_stock_count > 0 else "Good"
+
+        sales_trend_color = "#10b981" if sales_trend >= 0 else "#ef4444"
+        sales_trend_sign = "+" if sales_trend >= 0 else ""
+
+        # Stats Row (moved above graph) - with equal sizing
         stats = QHBoxLayout()
         stats.setSpacing(20)
-        stats.addWidget(StatMiniCard("📦", "Total Items",
-                                     str(db_stats['total_items']), "+2.5%"))
-        stats.addWidget(StatMiniCard("⚠️", "Low Stock",
-                                     f"{db_stats['low_stock_items']} Items", "-5%"))
-        stats.addWidget(StatMiniCard("🚚", "Sold Today",
-                                     f"{db_stats['units_sold_today']} units", "+18%"))
 
-        # Content Row
+        stat1 = StatMiniCard("📦", "Total Items",
+                            str(db_stats['total_items']),
+                            f"{item_trend_sign}{int(item_count_trend)}%",
+                            item_trend_color)
+        stat1.setMinimumWidth(200)
+        stats.addWidget(stat1)
+
+        stat2 = StatMiniCard("⚠️", "Low Stock",
+                            f"{db_stats['low_stock_items']} Items",
+                            low_stock_trend,
+                            low_stock_color)
+        stat2.setMinimumWidth(200)
+        stats.addWidget(stat2)
+
+        stat3 = StatMiniCard("🚚", "Sold Today",
+                            f"{db_stats['units_sold_today']} units",
+                            f"{sales_trend_sign}{int(sales_trend)}%",
+                            sales_trend_color)
+        stat3.setMinimumWidth(200)
+        stats.addWidget(stat3)
+
+        best_seller_data = self.db.get_best_seller(self.date_range_days)
+        self.best_seller_widget = BestSellerWidget(best_seller_data, saleability_increase)
+        self.best_seller_widget.setMinimumWidth(200)
+        stats.addWidget(self.best_seller_widget)
+
+        self.stats_layout = stats
+
+        # Content Row (graph and quick actions)
         graph = QHBoxLayout()
         graph.setSpacing(20)
-        chart_placeholder = QFrame()
-        chart_placeholder.setStyleSheet("background-color: white; border: 1px dashed #d1d5db; border-radius: 8px; min-height: 300px;")
-        graph.addWidget(DashboardCard("Inventory Movements", chart_placeholder), 2)
-        
+        self.chart_widget = self._create_chart_widget()
+        graph.addWidget(DashboardCard("Inventory Movements", self.chart_widget), 2)
+
         act = DashboardCard("Quick Actions")
         act_l = QVBoxLayout()
         for a in ["Print Barcodes", "Generate Cycle Count", "Export CSV"]:
@@ -205,7 +325,7 @@ class InventoryDashboard(QWidget):
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet("text-align: left; padding: 10px; color: #374151; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 5px;")
             act_l.addWidget(b)
-        
+
         # Access the layout of the DashboardCard
         container = QWidget()
         container.setLayout(act_l)
@@ -217,10 +337,10 @@ class InventoryDashboard(QWidget):
         layout.addWidget(line)
         layout.addLayout(sorter_row)
         layout.addLayout(header)
-        layout.addSpacing(10)
-        layout.addLayout(graph)
+        layout.addSpacing(2)
         layout.addLayout(stats)
-        layout.addStretch(1)
+        layout.addSpacing(2)
+        layout.addLayout(graph, 1)
 
     def date_sorter(self, default_text="Last 7 Days"):
         dateSorter_btn = QPushButton(default_text)
@@ -291,6 +411,96 @@ class InventoryDashboard(QWidget):
 
     def _update_date_range(self, text, button):
         button.setText(text)
+
+        if text == "Today":
+            self.date_range_days = 1
+        elif text == "Last 7 Days":
+            self.date_range_days = 7
+        elif text == "Last 30 Days":
+            self.date_range_days = 30
+        else:
+            self.date_range_days = 7
+
+        self._update_chart()
+        self._refresh_all_stats()
+
+    def _create_chart_widget(self):
+        figure = Figure(figsize=(6, 3), dpi=100, facecolor='white')
+        canvas = FigureCanvas(figure)
+        self._plot_inventory_chart(figure)
+        return canvas
+
+    def _update_chart(self):
+        if self.chart_widget and isinstance(self.chart_widget, FigureCanvas):
+            figure = self.chart_widget.figure
+            figure.clear()
+            self._plot_inventory_chart(figure)
+            self.chart_widget.draw()
+
+    def _update_alerts(self):
+        if self.alerts_layout:
+            while self.alerts_layout.count():
+                item = self.alerts_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+            saleability_increase = self.db.get_saleability_increase(self.date_range_days)
+            increase_sign = "+" if saleability_increase >= 0 else ""
+            self.alerts_layout.addWidget(StatMiniCard("📈", "Saleability Increase",
+                                                       f"{abs(int(saleability_increase))}%",
+                                                       f"{increase_sign}{int(saleability_increase)}%"))
+            self.alerts_layout.addStretch()
+
+        if self.stats_layout and self.best_seller_widget:
+            self.best_seller_widget.deleteLater()
+            best_seller_data = self.db.get_best_seller(self.date_range_days)
+            self.best_seller_widget = BestSellerWidget(best_seller_data)
+            self.stats_layout.addWidget(self.best_seller_widget)
+
+    def _plot_inventory_chart(self, figure):
+        ax = figure.add_subplot(111)
+
+        movements = self.db.get_inventory_movements(limit=200)
+        if not movements:
+            ax.text(0.5, 0.5, 'No inventory data available',
+                   ha='center', va='center', transform=ax.transAxes)
+            return
+
+        cutoff_date = datetime.now() - timedelta(days=self.date_range_days)
+
+        daily_data = {}
+        for move in movements:
+            move_date = datetime.fromisoformat(move['created_at'])
+            if move_date >= cutoff_date:
+                date_key = move_date.strftime('%m-%d')
+                if date_key not in daily_data:
+                    daily_data[date_key] = {'in': 0, 'out': 0}
+
+                if 'IN' in move['movement_type']:
+                    daily_data[date_key]['in'] += move['quantity']
+                else:
+                    daily_data[date_key]['out'] += move['quantity']
+
+        if not daily_data:
+            ax.text(0.5, 0.5, 'No data in selected period',
+                   ha='center', va='center', transform=ax.transAxes)
+            return
+
+        dates = sorted(daily_data.keys())
+        inbound = [daily_data[d]['in'] for d in dates]
+        outbound = [daily_data[d]['out'] for d in dates]
+
+        x = range(len(dates))
+        ax.plot(x, inbound, marker='o', linewidth=2, label='Inbound', color='#10b981', markersize=4)
+        ax.plot(x, outbound, marker='s', linewidth=2, label='Outbound', color='#ef4444', markersize=4)
+
+        ax.set_ylabel('Quantity', fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(dates, rotation=45, ha='right', fontsize=7)
+        ax.legend(fontsize=7, loc='upper left')
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(axis='y', labelsize=7)
+        figure.tight_layout(pad=0.5)
 
 # Initialize UI
 if __name__ == "__main__":
