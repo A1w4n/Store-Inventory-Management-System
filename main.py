@@ -44,8 +44,8 @@ class LoginWindow(UI_Base):
         else:
             self.error_label.setText(f"Unable to Login!")
             self.error_label.show()
-            self.highlight_error(self.username_input)
-            self.highlight_error(self.password_input)
+            self._highlight_error(self.username_input)
+            self._highlight_error(self.password_input)
 
     def _highlight_error(self, widget):
         """Applies error styling if fields are empty."""
