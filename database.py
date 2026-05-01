@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import hashlib
 
@@ -366,7 +366,7 @@ class InventoryDatabase:
 
         # Update inventory via update_quantity
         self.update_quantity(item_id, new_quantity, "SALE", user_id,
-                           f"Sold {quantity_sold} units at ${sale_price}")
+                           f"Sold {quantity_sold} units at Php {sale_price}")
 
         conn.commit()
         self.disconnect()
@@ -400,6 +400,132 @@ class InventoryDatabase:
         sales = cursor.fetchall()
         self.disconnect()
         return sales
+
+    def get_item_count_trend(self, days=7):
+        """Calculate item count increase/decrease percentage."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        previous_cutoff = (datetime.now() - timedelta(days=days*2)).isoformat()
+        previous_end = (datetime.now() - timedelta(days=days)).isoformat()
+
+        # Current period: items created
+        cursor.execute("""
+            SELECT COUNT(*) FROM items WHERE created_at >= ?
+        """, (cutoff_date,))
+        current_items = cursor.fetchone()[0]
+
+        # Previous period: items created
+        cursor.execute("""
+            SELECT COUNT(*) FROM items WHERE created_at >= ? AND created_at < ?
+        """, (previous_cutoff, previous_end))
+        previous_items = cursor.fetchone()[0]
+
+        if previous_items == 0:
+            trend = 0 if current_items == 0 else 100
+        else:
+            trend = ((current_items - previous_items) / previous_items) * 100
+
+        self.disconnect()
+        return trend
+
+    def get_low_stock_status(self):
+        """Get low stock count and average threshold."""
+        conn = self.connect()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM items WHERE quantity <= low_stock_threshold
+        """)
+        low_stock_count = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT AVG(low_stock_threshold) FROM items
+        """)
+        avg_threshold = cursor.fetchone()[0] or 10
+
+        self.disconnect()
+        return low_stock_count, avg_threshold
+
+    def get_sales_trend(self, days=7):
+        """Calculate sales increase/decrease percentage."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        previous_cutoff = (datetime.now() - timedelta(days=days*2)).isoformat()
+        previous_end = (datetime.now() - timedelta(days=days)).isoformat()
+
+        # Current period sales
+        cursor.execute("""
+            SELECT COALESCE(SUM(quantity_sold), 0) FROM sales WHERE sale_date >= ?
+        """, (cutoff_date,))
+        current_sales = cursor.fetchone()[0]
+
+        # Previous period sales
+        cursor.execute("""
+            SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+            WHERE sale_date >= ? AND sale_date < ?
+        """, (previous_cutoff, previous_end))
+        previous_sales = cursor.fetchone()[0]
+
+        if previous_sales == 0:
+            trend = 0 if current_sales == 0 else 100
+        else:
+            trend = ((current_sales - previous_sales) / previous_sales) * 100
+
+        self.disconnect()
+        return trend
+
+    def get_best_seller(self, days=7):
+        """Get the best selling item in the last N days."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+        cursor.execute("""
+            SELECT i.id, i.name, i.price, i.quantity, i.image_path,
+                   COALESCE(SUM(s.quantity_sold), 0) as total_sold
+            FROM items i
+            LEFT JOIN sales s ON i.id = s.item_id AND s.sale_date >= ?
+            GROUP BY i.id
+            ORDER BY total_sold DESC
+            LIMIT 1
+        """, (cutoff_date,))
+
+        result = cursor.fetchone()
+        self.disconnect()
+        return result
+
+    def get_saleability_increase(self, days=7):
+        """Calculate saleability increase compared to previous period."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        now = datetime.now()
+        current_start = (now - timedelta(days=days)).isoformat()
+        previous_start = (now - timedelta(days=days*2)).isoformat()
+        previous_end = (now - timedelta(days=days)).isoformat()
+
+        # Current period sales
+        cursor.execute("""
+            SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+            WHERE sale_date >= ?
+        """, (current_start,))
+        current_sales = cursor.fetchone()[0]
+
+        # Previous period sales
+        cursor.execute("""
+            SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+            WHERE sale_date >= ? AND sale_date < ?
+        """, (previous_start, previous_end))
+        previous_sales = cursor.fetchone()[0]
+
+        if previous_sales == 0:
+            increase_percent = 0 if current_sales == 0 else 100
+        else:
+            increase_percent = ((current_sales - previous_sales) / previous_sales) * 100
+
+        self.disconnect()
+        return increase_percent
 
     # DASHBOARD STATISTICS
     def get_dashboard_stats(self):
