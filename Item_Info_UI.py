@@ -35,13 +35,13 @@ class ItemRow(QFrame):
             layout.addWidget(name, 2)
 
             # Price (weight 1)
-            price_label = QLabel(f"${float(item_data['price']):.2f}")
-            price_label.setStyleSheet("font-weight: bold; color: #000000; font-size: 12px;")
+            price_label = QLabel(f"Php {float(item_data['price']):.2f}")
+            price_label.setStyleSheet("color: #000000; font-size: 12px;")
             layout.addWidget(price_label, 1)
 
             # Stock (weight 1)
             stock_label = QLabel(str(item_data['quantity']))
-            stock_label.setStyleSheet("font-weight: bold; color: #000000; font-size: 12px;")
+            stock_label.setStyleSheet("color: #000000; font-size: 12px;")
             layout.addWidget(stock_label, 1)
 
             # Category (weight 1)
@@ -50,7 +50,7 @@ class ItemRow(QFrame):
             except (KeyError, TypeError, IndexError):
                 category_name = 'N/A'
             category_label = QLabel(category_name)
-            category_label.setStyleSheet("font-weight: bold; color: #000000; font-size: 12px;")
+            category_label.setStyleSheet("color: #000000; font-size: 12px;")
             layout.addWidget(category_label, 1)
         else:
             # Placeholder loading state
@@ -88,7 +88,7 @@ class ItemCard(QFrame):
         if item_data:
             name = QLabel(item_data['name'])
             name.setStyleSheet("font-weight: bold; color: #000000; font-size: 13px;")
-            price = QLabel(f"${item_data['price']:.2f}")
+            price = QLabel(f"Php {float(item_data['price']):.2f}")
             price.setStyleSheet("color: #000000; font-size: 12px;")
             layout.addWidget(name)
             layout.addWidget(price)
@@ -239,7 +239,7 @@ class DeleteItemDialog(QDialog):
             self.item_combo.setEnabled(False)
         else:
             for item in items:
-                display_text = f"{item['name']} - ${item['price']:.2f} (Stock: {item['quantity']})"
+                display_text = f"{item['name']} - Php {float(item['price']):.2f} (Stock: {item['quantity']})"
                 self.item_combo.addItem(display_text, item['id'])
 
         layout.addWidget(self.item_combo)
