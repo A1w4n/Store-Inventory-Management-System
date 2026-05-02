@@ -1,19 +1,27 @@
 import sys
+from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QApplication,
     QLineEdit, QPushButton, QScrollArea, QFrame, QMenu, QStackedWidget, QGridLayout,
-    QDialog, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QMessageBox
+    QDialog, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QMessageBox,
+    QFileDialog, QCheckBox
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction, QPixmap
+import qrcode
+import json
+from PIL import Image
+import io
 from database import InventoryDatabase
 
 class ItemRow(QFrame):
     # For List
-    def __init__(self, item_data=None):
+    def __init__(self, item_data=None, on_select=None):
         super().__init__()
         self.setFixedHeight(60)
         self.item_data = item_data
+        self.on_select = on_select
+        self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame { background-color: transparent; border: none; }
             QFrame:hover { background-color: #f9fafb; border-radius: 8px; }
@@ -21,12 +29,36 @@ class ItemRow(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 0, 20, 0)
         layout.setSpacing(0)
+        
+        self.checkbox = QCheckBox()
+        self.checkbox.setStyleSheet("""
+            QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #d1d5db; border-radius: 4px; }
+            QCheckBox::indicator:checked { background-color: #ef4444; border: 2px solid #ef4444; }
+        """)
+        layout.addWidget(self.checkbox)
+        layout.addSpacing(15)
 
         # Image placeholder
-        img = QFrame()
-        img.setFixedSize(60, 60)
-        img.setStyleSheet("background-color: #f9fafb; border: 1px dashed #d1d5db; border-radius: 6px;")
-        layout.addWidget(img)
+        # --- Actual Image Display ---
+        img_label = QLabel()
+        img_label.setFixedSize(60, 60)
+        img_label.setAlignment(Qt.AlignCenter)
+        
+        # Safely convert data and get image path
+        item_dict = dict(self.item_data) if self.item_data else {}
+        image_path = item_dict.get('image_path')
+
+        # Check if the image path exists in the database AND on the computer
+        if image_path and Path(image_path).exists():
+            pixmap = QPixmap(image_path)
+            # Scale image smoothly to fit the box
+            img_label.setPixmap(pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            img_label.setStyleSheet("border: 1px solid #e5e7eb; border-radius: 6px;")
+        else:
+            # Fallback dashed box if no image is found
+            img_label.setStyleSheet("background-color: #f9fafb; border: 1px dashed #d1d5db; border-radius: 6px;")
+            
+        layout.addWidget(img_label)
 
         if item_data:
             # Product Name (weight 2)
@@ -64,26 +96,53 @@ class ItemRow(QFrame):
             d.setStyleSheet("background-color: #f9fafb; border-radius: 4px;")
             layout.addWidget(d, 1)
 
-        # Menu button
-        layout.addSpacing(12)
-        btn = QPushButton("⋮")
-        btn.setFixedSize(30, 30)
-        btn.setStyleSheet("border: none; font-size: 18px; color: #6b7280;")
-        layout.addWidget(btn)
+    def mousePressEvent(self, event):
+        if self.item_data and self.on_select:
+            self.on_select(self.item_data)
+        super().mousePressEvent(event)
+
+    def show_qr_code(self):
+        """Show QR code dialog for this item."""
+        if self.item_data:
+            dialog = QRCodeDialog(self.item_data)
+            dialog.exec()
 
 class ItemCard(QFrame):
     # For Grid
-    def __init__(self, item_data=None):
+    def __init__(self, item_data=None, on_select=None):
         super().__init__()
         self.setFixedSize(180, 220)
         self.item_data = item_data
+        self.on_select = on_select
+        self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame { background-color: transparent; border: none; }
             QFrame:hover { background-color: #f9fafb; border-radius: 8px; }
         """)
         layout = QVBoxLayout(self)
-        img = QFrame(); img.setStyleSheet("background-color: #f9fafb; border: 1px dashed #d1d5db; border-radius: 8px;")
-        layout.addWidget(img, 3)
+        self.checkbox = QCheckBox()
+        self.checkbox.setStyleSheet("""
+            QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #d1d5db; border-radius: 4px; }
+            QCheckBox::indicator:checked { background-color: #ef4444; border: 2px solid #ef4444; }
+        """)
+        layout.addWidget(self.checkbox, alignment=Qt.AlignLeft)
+        
+        # --- Actual Image Display ---
+        img_label = QLabel()
+        img_label.setFixedHeight(100) # Give it a nice height for the card
+        img_label.setAlignment(Qt.AlignCenter)
+        
+        item_dict = dict(self.item_data) if self.item_data else {}
+        image_path = item_dict.get('image_path')
+
+        if image_path and Path(image_path).exists():
+            pixmap = QPixmap(image_path)
+            img_label.setPixmap(pixmap.scaled(150, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            img_label.setStyleSheet("border-radius: 8px;")
+        else:
+            img_label.setStyleSheet("background-color: #f9fafb; border: 1px dashed #d1d5db; border-radius: 8px;")
+            
+        layout.addWidget(img_label, 3)
 
         if item_data:
             name = QLabel(item_data['name'])
@@ -98,8 +157,15 @@ class ItemCard(QFrame):
             layout.addWidget(t); layout.addWidget(d)
 
         btn = QPushButton("View Detail")
+        btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet("background: #f3f4f6; color: #4b5563; font-size: 11px; font-weight: bold; padding: 5px; border-radius: 4px; border: none;")
+        btn.clicked.connect(lambda: self.on_select(self.item_data) if self.item_data and self.on_select else None)
         layout.addWidget(btn)
+
+    def mousePressEvent(self, event):
+        if self.item_data and self.on_select:
+            self.on_select(self.item_data)
+        super().mousePressEvent(event)
 
 class AddItemDialog(QDialog):
     """Dialog for adding a new item."""
@@ -160,6 +226,29 @@ class AddItemDialog(QDialog):
         self.threshold_input.setValue(10)
         layout.addWidget(self.threshold_input)
 
+        # Product Image
+        layout.addWidget(QLabel("Product Image"))
+        image_layout = QHBoxLayout()
+        self.image_input = QLineEdit()
+        self.image_input.setReadOnly(True)
+        self.image_input.setPlaceholderText("No image selected")
+        image_layout.addWidget(self.image_input)
+
+        browse_btn = QPushButton("Browse")
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setStyleSheet("background: #3b82f6; color: white; font-weight: bold; padding: 8px; border-radius: 6px; border: none;")
+        browse_btn.clicked.connect(self.browse_image)
+        image_layout.addWidget(browse_btn)
+        layout.addLayout(image_layout)
+
+        self.image_preview = QLabel("No image selected")
+        self.image_preview.setAlignment(Qt.AlignCenter)
+        self.image_preview.setFixedHeight(120)
+        self.image_preview.setStyleSheet("background: #f3f4f6; border: 1px dashed #d1d5db; border-radius: 10px; color: #6b7280; padding: 10px;")
+        layout.addWidget(self.image_preview)
+
+        self.image_path = None
+
         # Description
         layout.addWidget(QLabel("Description"))
         self.description_input = QTextEdit()
@@ -180,6 +269,30 @@ class AddItemDialog(QDialog):
         button_layout.addWidget(add_btn)
         button_layout.addWidget(cancel_btn)
         layout.addLayout(button_layout)
+
+    def browse_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Product Image",
+            "",
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+        if file_path:
+            self.image_path = file_path
+            self.image_input.setText(file_path)
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                self.image_preview.setPixmap(pixmap.scaled(
+                    self.image_preview.width(),
+                    self.image_preview.height(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                ))
+            else:
+                self.image_preview.setText("Preview unavailable")
+        else:
+            self.image_path = None
+            self.image_preview.setText("No image selected")
 
     def add_item(self):
         """Add item to database."""
@@ -206,11 +319,22 @@ class AddItemDialog(QDialog):
             price=price,
             quantity=quantity,
             low_stock_threshold=threshold,
-            description=description
+            description=description,
+            image_path=self.image_path
         )
 
         if item_id:
             QMessageBox.information(self, "Success", f"Item '{name}' added successfully!")
+            # Show QR code for the new item
+            item_data = {
+                'id': item_id,
+                'name': name,
+                'sku': sku,
+                'price': price,
+                'quantity': quantity
+            }
+            qr_dialog = QRCodeDialog(item_data, self)
+            qr_dialog.exec()
             self.accept()
         else:
             QMessageBox.critical(self, "Error", "Failed to add item. SKU might already exist.")
@@ -287,7 +411,70 @@ class DeleteItemDialog(QDialog):
                 QMessageBox.critical(self, "Error", "Failed to delete item.")
 
 
+class QRCodeDialog(QDialog):
+    """Dialog to display QR code for an item."""
+    def __init__(self, item_data, parent=None):
+        super().__init__(parent)
+        self.item_data = item_data
+        self.setWindowTitle(f"QR Code for {item_data['name']}")
+        self.setGeometry(100, 100, 300, 400)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        item_data = dict(self.item_data)  # Convert from RowProxy to dict if needed
+
+        # Title
+        title = QLabel(f"QR Code for {self.item_data['name']}")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
+
+        # QR Code image
+        qr_data = {
+            "id": self.item_data['id'],
+            "name": self.item_data['name'],
+            "sku": self.item_data.get('sku'),
+            "price": self.item_data['price'],
+            "quantity": self.item_data['quantity']
+        }
+        qr_json = json.dumps(qr_data)
+
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(qr_json)
+        qr.make(fit=True)
+        img = qr.make_image(fill='black', back_color='white')
+
+        # Convert PIL image to QPixmap
+        from PIL import Image
+        import io
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+
+        qr_label = QLabel()
+        qr_label.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        qr_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(qr_label)
+
+        # Info text
+        info = QLabel("Scan this QR code to quickly access item details.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #6b7280; font-size: 12px;")
+        layout.addWidget(info)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+
 class ItemInfoPage(QWidget):
+    item_changed = Signal()
     def __init__(self, db=None):
         super().__init__()
         self.db = db or InventoryDatabase()
@@ -393,7 +580,14 @@ class ItemInfoPage(QWidget):
         self.view_stack.addWidget(grid_scroll)
 
         # Load initial items
+        self.detail_panel = self._create_detail_panel()
         self.refresh_items()
+
+        # Content row with item views and detail panel
+        content_row = QHBoxLayout()
+        content_row.setSpacing(20)
+        content_row.addWidget(self.view_stack, 3)
+        content_row.addWidget(self.detail_panel, 1)
 
         # 3. FIXED FOOTER
         footer = QFrame()
@@ -412,7 +606,7 @@ class ItemInfoPage(QWidget):
 
         # Layout
         main_layout.addLayout(header)
-        main_layout.addWidget(self.view_stack)
+        main_layout.addLayout(content_row)
         footer_layout.addWidget(del_btn)
         footer_layout.addWidget(add_btn)
         footer_layout.addStretch()
@@ -435,11 +629,11 @@ class ItemInfoPage(QWidget):
 
         # Add to list view
         for item in items:
-            self.list_layout.addWidget(ItemRow(item))
+            self.list_layout.addWidget(ItemRow(item, on_select=self.display_item_details))
 
         # Add to grid view
         for i, item in enumerate(items):
-            self.grid_layout.addWidget(ItemCard(item), i // 4, i % 4)
+            self.grid_layout.addWidget(ItemCard(item, on_select=self.display_item_details), i // 4, i % 4)
 
     def on_search_changed(self):
         """Handle search input changes."""
@@ -456,11 +650,108 @@ class ItemInfoPage(QWidget):
             self.toggle_btn.setText("Grid View")
             self.current_mode = "list"
 
+    def _create_detail_panel(self):
+        panel = QFrame()
+        panel.setStyleSheet("""
+            QFrame { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; }
+            QLabel { color: #111827; }
+        """)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(20, 20, 20, 20)
+        panel_layout.setSpacing(15)
+
+        heading = QLabel("Item Details")
+        heading.setStyleSheet("font-size: 20px; font-weight: 700; color: #111827; border: none;")
+        panel_layout.addWidget(heading)
+
+        self.detail_image = QLabel("No item selected")
+        self.detail_image.setFixedHeight(180)
+        self.detail_image.setAlignment(Qt.AlignCenter)
+        self.detail_image.setStyleSheet("background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 12px; color: #6b7280;")
+        panel_layout.addWidget(self.detail_image)
+
+        self.detail_name = QLabel("Select an item to view details")
+        self.detail_name.setWordWrap(True)
+        self.detail_name.setStyleSheet("font-size: 16px; font-weight: 700; color: #111827;")
+        panel_layout.addWidget(self.detail_name)
+
+        self.detail_meta = QLabel("<i>SKU, category, price, and stock will appear here.</i>")
+        self.detail_meta.setWordWrap(True)
+        self.detail_meta.setStyleSheet("color: #4b5563; font-size: 13px;")
+        panel_layout.addWidget(self.detail_meta)
+
+        self.detail_description = QLabel("Select an item from the list or grid to see more information and the QR code.")
+        self.detail_description.setWordWrap(True)
+        self.detail_description.setStyleSheet("color: #6b7280; font-size: 12px;")
+        panel_layout.addWidget(self.detail_description)
+
+        self.detail_qr = QLabel()
+        self.detail_qr.setFixedSize(180, 180)
+        self.detail_qr.setAlignment(Qt.AlignCenter)
+        self.detail_qr.setStyleSheet("background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;")
+        panel_layout.addWidget(self.detail_qr, 0, Qt.AlignHCenter)
+
+        panel_layout.addStretch()
+        return panel
+
+    def _create_qr_pixmap(self, item_data, size=180):
+        item_data = dict(item_data)  # Convert from RowProxy to dict if needed
+        qr_data = {
+            "id": item_data.get('id'),
+            "name": item_data.get('name'),
+            "sku": item_data.get('sku'),
+            "price": item_data.get('price'),
+            "quantity": item_data.get('quantity')
+        }
+        qr_json = json.dumps(qr_data)
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(qr_json)
+        qr.make(fit=True)
+        img = qr.make_image(fill='black', back_color='white')
+        
+        from PIL import Image
+        import io
+        
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+        return pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def display_item_details(self, item_data):
+        item_data = dict(item_data)  # Convert from RowProxy to dict if needed
+        image_path = item_data.get('image_path')
+        if image_path and Path(image_path).exists():
+            img = QPixmap(image_path)
+            self.detail_image.setPixmap(img.scaled(self.detail_image.width(), self.detail_image.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.detail_image.setPixmap(QPixmap())
+            self.detail_image.setText("No image available")
+
+        self.detail_name.setText(str(item_data.get('name', 'Unnamed Item')))
+        sku = item_data.get('sku') or 'N/A'
+        category = item_data.get('category_name') or 'N/A'
+        price = float(item_data.get('price', 0.0))
+        quantity = item_data.get('quantity', 0)
+        threshold = item_data.get('low_stock_threshold', 'N/A')
+        self.detail_meta.setText(
+            f"<b>SKU:</b> {sku}<br>"
+            f"<b>Category:</b> {category}<br>"
+            f"<b>Price:</b> Php {price:.2f}<br>"
+            f"<b>Stock:</b> {quantity}<br>"
+            f"<b>Low stock threshold:</b> {threshold}"
+        )
+        description = item_data.get('description') or 'No description available.'
+        self.detail_description.setText(description)
+        self.detail_qr.setPixmap(self._create_qr_pixmap(item_data, size=180))
+
     def show_add_dialog(self):
         """Show dialog to add a new item."""
         dialog = AddItemDialog(self.db, self)
         if dialog.exec() == QDialog.Accepted:
             self.search_input.clear()  # Clear search
+            self.item_changed.emit()  # Notify dashboard of change
             self.refresh_items()  # Refresh to show new item
 
     def show_delete_dialog(self):
@@ -469,6 +760,7 @@ class ItemInfoPage(QWidget):
         if dialog.exec() == QDialog.Accepted and dialog.deleted_item:
             self.search_input.clear()  # Clear search
             self.refresh_items()  # Refresh after deletion
+            self.item_changed.emit()  # Notify dashboard of change
 
     def item_sorter(self, default_text="Sort by..."):
         itemSorter_btn = QPushButton(default_text)
@@ -487,7 +779,7 @@ class ItemInfoPage(QWidget):
             } 
             QPushButton:hover { background-color: #f9fafb; border-color: #4f46e5; }
             QPushButton::menu-indicator { image: none; }                         
-        """)   
+        """)    
 
         itemSorter_menu = QMenu(itemSorter_btn)
         itemSorter_menu.setStyleSheet("""
