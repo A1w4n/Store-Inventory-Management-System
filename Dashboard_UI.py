@@ -11,7 +11,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-from Item_info_UI import ItemInfoPage
+from Item_Info_UI import ItemInfoPage
+from Analytics_UI import AnalyticsPage
 from database import InventoryDatabase
 
 class DashboardCard(QFrame):
@@ -174,6 +175,27 @@ class InventoryDashboard(QWidget):
         self.alerts_layout = None
         self.stats_layout = None
         self.date_range_days = 7
+        self.setStyleSheet("""
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+                border: 2px solid #9ca3af;
+                border-radius: 5px;
+                background: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4f46e5;
+                border-color: #4f46e5;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #4f46e5;
+            }
+            QCheckBox {
+                spacing: 10px;
+                color: #111827;
+                font-size: 13px;
+            }
+        """)
         self._build_ui()
 
     def _build_ui(self):
@@ -218,9 +240,12 @@ class InventoryDashboard(QWidget):
         
         self.content_stack.addWidget(self.dashboard_page)
         # Adding placeholders for other pages to avoid index errors
-        self.item_info_page = ItemInfoPage()
+        self.item_info_page = ItemInfoPage(self.db)
+        self.item_info_page.item_changed.connect(self._refresh_all_stats)
         self.content_stack.insertWidget(1, self.item_info_page)
-        self.content_stack.addWidget(QLabel("Analytics Page Placeholder"))
+        self.analytics_page = AnalyticsPage(self.db)
+        self.content_stack.addWidget(self.analytics_page)   
+        self.content_stack.addWidget(QLabel("About Page Placeholder"))
         self.content_stack.addWidget(QLabel("Settings Page Placeholder"))
         
         self.outer_layout.addWidget(self.content_stack)
@@ -316,7 +341,7 @@ class InventoryDashboard(QWidget):
         graph = QHBoxLayout()
         graph.setSpacing(20)
         self.chart_widget = self._create_chart_widget()
-        graph.addWidget(DashboardCard("Inventory Movements", self.chart_widget), 2)
+        graph.addWidget(DashboardCard("Items Added & Stock", self.chart_widget), 2)
 
         act = DashboardCard("Quick Actions")
         act_l = QVBoxLayout()
@@ -390,6 +415,10 @@ class InventoryDashboard(QWidget):
 
     def switch_page(self, index):
         self.content_stack.setCurrentIndex(index)
+        
+        # Refresh dashboard when switching to it
+        if index == 0:
+            self._refresh_all_stats()
     
         for btn_index, btn in self.nav_buttons.items():
             if btn_index == index:
@@ -457,46 +486,86 @@ class InventoryDashboard(QWidget):
             self.best_seller_widget = BestSellerWidget(best_seller_data)
             self.stats_layout.addWidget(self.best_seller_widget)
 
+    def _refresh_all_stats(self):
+        if not self.stats_layout:
+            return
+
+        while self.stats_layout.count():
+            item = self.stats_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        db_stats = self.db.get_dashboard_stats()
+        item_count_trend = self.db.get_item_count_trend(self.date_range_days)
+        low_stock_count, avg_threshold = self.db.get_low_stock_status()
+        sales_trend = self.db.get_sales_trend(self.date_range_days)
+        saleability_increase = self.db.get_saleability_increase(self.date_range_days)
+
+        item_trend_color = "#10b981" if item_count_trend >= 0 else "#ef4444"
+        item_trend_sign = "+" if item_count_trend >= 0 else ""
+        low_stock_color = "#ef4444" if low_stock_count > 0 else "#10b981"
+        low_stock_trend = f"{low_stock_count} High" if low_stock_count > 0 else "Good"
+        sales_trend_color = "#10b981" if sales_trend >= 0 else "#ef4444"
+        sales_trend_sign = "+" if sales_trend >= 0 else ""
+
+        stat1 = StatMiniCard("📦", "Total Items",
+                            str(db_stats['total_items']),
+                            f"{item_trend_sign}{int(item_count_trend)}%",
+                            item_trend_color)
+        stat1.setMinimumWidth(200)
+        self.stats_layout.addWidget(stat1)
+
+        stat2 = StatMiniCard("⚠️", "Low Stock",
+                            f"{db_stats['low_stock_items']} Items",
+                            low_stock_trend,
+                            low_stock_color)
+        stat2.setMinimumWidth(200)
+        self.stats_layout.addWidget(stat2)
+
+        stat3 = StatMiniCard("🚚", "Sold Today",
+                            f"{db_stats['units_sold_today']} units",
+                            f"{sales_trend_sign}{int(sales_trend)}%",
+                            sales_trend_color)
+        stat3.setMinimumWidth(200)
+        self.stats_layout.addWidget(stat3)
+
+        if self.best_seller_widget:
+            self.best_seller_widget.deleteLater()
+        best_seller_data = self.db.get_best_seller(self.date_range_days)
+        self.best_seller_widget = BestSellerWidget(best_seller_data, saleability_increase)
+        self.best_seller_widget.setMinimumWidth(200)
+        self.stats_layout.addWidget(self.best_seller_widget)
+
+        self._update_chart()
+
     def _plot_inventory_chart(self, figure):
         ax = figure.add_subplot(111)
 
-        movements = self.db.get_inventory_movements(limit=200)
-        if not movements:
-            ax.text(0.5, 0.5, 'No inventory data available',
+        # Get items added per day
+        items_added = self.db.get_items_added_per_day(self.date_range_days)
+        if not items_added:
+            ax.text(0.5, 0.5, 'No items added in selected period',
                    ha='center', va='center', transform=ax.transAxes)
             return
 
-        cutoff_date = datetime.now() - timedelta(days=self.date_range_days)
+        # Get total stock
+        total_stock = self.db.get_dashboard_stats()['total_quantity']
 
-        daily_data = {}
-        for move in movements:
-            move_date = datetime.fromisoformat(move['created_at'])
-            if move_date >= cutoff_date:
-                date_key = move_date.strftime('%m-%d')
-                if date_key not in daily_data:
-                    daily_data[date_key] = {'in': 0, 'out': 0}
-
-                if 'IN' in move['movement_type']:
-                    daily_data[date_key]['in'] += move['quantity']
-                else:
-                    daily_data[date_key]['out'] += move['quantity']
-
-        if not daily_data:
-            ax.text(0.5, 0.5, 'No data in selected period',
-                   ha='center', va='center', transform=ax.transAxes)
-            return
-
-        dates = sorted(daily_data.keys())
-        inbound = [daily_data[d]['in'] for d in dates]
-        outbound = [daily_data[d]['out'] for d in dates]
+        # Prepare data
+        dates = [item[0] for item in items_added]  # DATE strings
+        counts = [item[1] for item in items_added]  # counts
 
         x = range(len(dates))
-        ax.plot(x, inbound, marker='o', linewidth=2, label='Inbound', color='#10b981', markersize=4)
-        ax.plot(x, outbound, marker='s', linewidth=2, label='Outbound', color='#ef4444', markersize=4)
 
-        ax.set_ylabel('Quantity', fontsize=8)
+        # Plot bars for items added
+        ax.bar(x, counts, color='#4f46e5', alpha=0.7, label='Items Added')
+
+        # Plot horizontal line for total stock
+        ax.axhline(y=total_stock, color='#10b981', linestyle='--', linewidth=2, label=f'Total Stock: {total_stock}')
+
+        ax.set_ylabel('Count', fontsize=8)
         ax.set_xticks(x)
-        ax.set_xticklabels(dates, rotation=45, ha='right', fontsize=7)
+        ax.set_xticklabels([d.split('-')[1] + '-' + d.split('-')[2] for d in dates], rotation=45, ha='right', fontsize=7)  # MM-DD
         ax.legend(fontsize=7, loc='upper left')
         ax.grid(True, alpha=0.3)
         ax.tick_params(axis='y', labelsize=7)
