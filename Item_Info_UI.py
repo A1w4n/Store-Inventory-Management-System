@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QDialog, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QMessageBox,
     QFileDialog, QCheckBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QAction, QPixmap
 import qrcode
 import json
@@ -29,14 +29,6 @@ class ItemRow(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 0, 20, 0)
         layout.setSpacing(0)
-        
-        self.checkbox = QCheckBox()
-        self.checkbox.setStyleSheet("""
-            QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #d1d5db; border-radius: 4px; }
-            QCheckBox::indicator:checked { background-color: #ef4444; border: 2px solid #ef4444; }
-        """)
-        layout.addWidget(self.checkbox)
-        layout.addSpacing(15)
 
         # Image placeholder
         # --- Actual Image Display ---
@@ -120,12 +112,7 @@ class ItemCard(QFrame):
             QFrame:hover { background-color: #f9fafb; border-radius: 8px; }
         """)
         layout = QVBoxLayout(self)
-        self.checkbox = QCheckBox()
-        self.checkbox.setStyleSheet("""
-            QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #d1d5db; border-radius: 4px; }
-            QCheckBox::indicator:checked { background-color: #ef4444; border: 2px solid #ef4444; }
-        """)
-        layout.addWidget(self.checkbox, alignment=Qt.AlignLeft)
+
         
         # --- Actual Image Display ---
         img_label = QLabel()
@@ -167,108 +154,611 @@ class ItemCard(QFrame):
             self.on_select(self.item_data)
         super().mousePressEvent(event)
 
-class AddItemDialog(QDialog):
-    """Dialog for adding a new item."""
+
+class ToastNotification(QFrame):
+    """A brief, self-dismissing notification that appears at the bottom of the parent."""
+    def __init__(self, message, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #111827;
+                border-radius: 10px;
+                border: 1px solid #374151;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+
+        icon = QLabel("✓")
+        icon.setStyleSheet("""
+            color: #10b981;
+            font-size: 16px;
+            font-weight: bold;
+            background: transparent;
+            border: none;
+        """)
+        layout.addWidget(icon)
+
+        msg = QLabel(message)
+        msg.setStyleSheet("""
+            color: #f9fafb;
+            font-size: 13px;
+            font-weight: 500;
+            background: transparent;
+            border: none;
+        """)
+        layout.addWidget(msg)
+        self.adjustSize()
+
+    def show_toast(self, duration_ms=2800):
+        """Position near the bottom-centre of the parent and auto-dismiss."""
+        if self.parent():
+            pw = self.parent().width()
+            ph = self.parent().height()
+            tw = max(self.sizeHint().width(), 280)
+            self.setFixedWidth(tw)
+            self.adjustSize()
+            x = (pw - tw) // 2
+            y = ph - self.height() - 28
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        QTimer.singleShot(duration_ms, self.deleteLater)
+
+
+class AddCategoryDialog(QDialog):
+    """Small dialog to create a new category on the fly."""
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
-        self.setWindowTitle("Add New Item")
-        self.setGeometry(100, 100, 400, 400)
+        self.new_category_id = None
+        self.new_category_name = None
+        self.setWindowTitle("New Category")
+        self.setFixedSize(380, 220)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog { background-color: #ffffff; }
+            QLabel  { color: #111827; font-size: 13px; }
+            QLineEdit, QTextEdit {
+                background-color: #f9fafb;
+                border: 1.5px solid #d1d5db;
+                border-radius: 8px;
+                color: #111827;
+                padding: 8px 10px;
+                font-size: 13px;
+            }
+            QLineEdit:focus, QTextEdit:focus { border-color: #4f46e5; background-color: #ffffff; }
+        """)
         self._build_ui()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(0)
 
-        # Name
-        layout.addWidget(QLabel("Product Name *"))
+        # Title row
+        title_row = QHBoxLayout()
+        icon = QLabel("🏷️")
+        icon.setFixedSize(36, 36)
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setStyleSheet("background:#ede9fe; border-radius:8px; font-size:18px;")
+        title_row.addWidget(icon)
+        title_row.addSpacing(10)
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        heading = QLabel("New Category")
+        heading.setStyleSheet("font-size:15px; font-weight:700; color:#111827;")
+        col.addWidget(heading)
+        sub = QLabel("Add a category to organise your items.")
+        sub.setStyleSheet("font-size:11px; color:#6b7280;")
+        col.addWidget(sub)
+        title_row.addLayout(col)
+        title_row.addStretch()
+
+        # Divider
+        div = QFrame(); div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet("color:#e5e7eb;")
+        layout.addWidget(div)
+        layout.addSpacing(16)
+
+        # Category name field
+        name_lbl = QLabel("Category Name *")
+        name_lbl.setStyleSheet("color:#6b7280; font-size:12px; font-weight:600;")
+        layout.addWidget(name_lbl)
+        layout.addSpacing(4)
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter product name")
+        self.name_input.setPlaceholderText("e.g. Electronics, Beverages…")
+        self.name_input.setFixedHeight(38)
+        self.name_input.returnPressed.connect(self.save_category)
         layout.addWidget(self.name_input)
+        layout.addSpacing(20)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setFixedHeight(38)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background:#f3f4f6; color:#374151;
+                border:1.5px solid #d1d5db; border-radius:8px;
+                font-size:13px; font-weight:600; padding:0 18px;
+            }
+            QPushButton:hover { background:#e5e7eb; color:#111827; }
+        """)
+        cancel_btn.clicked.connect(self.reject)
+
+        save_btn = QPushButton("Save Category")
+        save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setFixedHeight(38)
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #4f46e5, stop:1 #6366f1);
+                color:white; border:none; border-radius:8px;
+                font-size:13px; font-weight:700; padding:0 20px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #4338ca, stop:1 #4f46e5);
+            }
+        """)
+        save_btn.clicked.connect(self.save_category)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def save_category(self):
+        name = self.name_input.text().strip()
+        if not name:
+            self.name_input.setStyleSheet("""
+                QLineEdit {
+                    background:#fff5f5; border:1.5px solid #ef4444;
+                    border-radius:8px; color:#111827;
+                    padding:8px 10px; font-size:13px;
+                }
+            """)
+            self.name_input.setPlaceholderText("Category name is required!")
+            return
+
+        cat_id = self.db.add_category(name)
+        if cat_id:
+            self.new_category_id = cat_id
+            self.new_category_name = name
+            self.accept()
+        else:
+            self.name_input.setStyleSheet("""
+                QLineEdit {
+                    background:#fff5f5; border:1.5px solid #ef4444;
+                    border-radius:8px; color:#111827;
+                    padding:8px 10px; font-size:13px;
+                }
+            """)
+            self.name_input.setText("")
+            self.name_input.setPlaceholderText("That category already exists!")
+
+
+class AddItemDialog(QDialog):
+    """Dialog for adding a new item or updating an existing one."""
+    def __init__(self, db, parent=None, item_data=None):
+        super().__init__(parent)
+        self.db = db
+        self.item_data = item_data
+        self.image_path = item_data.get('image_path') if item_data else None
+        self.setWindowTitle("Update Item" if item_data else "Add New Item")
+        self.setMinimumSize(820, 640)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f9fafb;
+            }
+            QLabel {
+                color: #111827;
+                font-size: 13px;
+            }
+            QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+                background-color: #ffffff;
+                border: 1.5px solid #d1d5db;
+                border-radius: 8px;
+                color: #111827;
+                padding: 8px 10px;
+                font-size: 13px;
+                selection-background-color: #4f46e5;
+            }
+            QLineEdit:focus, QTextEdit:focus, QSpinBox:focus,
+            QDoubleSpinBox:focus, QComboBox:focus {
+                border-color: #4f46e5;
+                background-color: #ffffff;
+            }
+            QLineEdit::placeholder, QTextEdit::placeholder {
+                color: #9ca3af;
+            }
+            QSpinBox::up-button, QSpinBox::down-button,
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+                background-color: #e5e7eb;
+                border: none;
+                border-radius: 4px;
+                width: 18px;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+            QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
+                background-color: #d1d5db;
+            }
+            QComboBox:hover {
+                border-color: #6366f1;
+            }
+            QComboBox::drop-down {
+                border: none;
+                padding-right: 10px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #ffffff;
+                border: 1px solid #d1d5db;
+                color: #374151;
+                selection-background-color: #f3f4f6;
+                selection-color: #4f46e5;
+                outline: none;
+            }
+            QScrollBar:vertical {
+                background: #f3f4f6;
+                width: 6px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: #d1d5db;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4f46e5;
+            }
+        """)
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── LEFT PANEL: image drop zone ──────────────────────────────────────
+        left_panel = QFrame()
+        left_panel.setFixedWidth(260)
+        left_panel.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border-right: 1px solid #e5e7eb;
+            }
+        """)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(24, 32, 24, 32)
+        left_layout.setSpacing(16)
+
+        # Heading
+        panel_title = QLabel("Update Product" if self.item_data else "New Product")
+        panel_title.setStyleSheet("font-size: 20px; font-weight: 700; color: #111827; letter-spacing: 0.5px;")
+        left_layout.addWidget(panel_title)
+
+        sub_text = "Update the details of the\nexisting item." if self.item_data else "Fill in the form to add a\nnew item to your inventory."
+        sub = QLabel(sub_text)
+        sub.setWordWrap(True)
+        sub.setStyleSheet("color: #6b7280; font-size: 12px; line-height: 1.5;")
+        left_layout.addWidget(sub)
+
+        # Divider
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet("color: #e5e7eb;")
+        left_layout.addWidget(div)
+
+        # Image preview box (click to browse)
+        self.image_preview = QLabel()
+        self.image_preview.setFixedSize(210, 210)
+        self.image_preview.setAlignment(Qt.AlignCenter)
+        self.image_preview.setWordWrap(True)
+        self.image_preview.setCursor(Qt.PointingHandCursor)
+        
+        if self.image_path and Path(self.image_path).exists():
+            pixmap = QPixmap(self.image_path)
+            self.image_preview.setPixmap(pixmap.scaled(210, 210, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.image_preview.setStyleSheet("""
+                QLabel {
+                    background-color: #f9fafb;
+                    border: 2px solid #4f46e5;
+                    border-radius: 14px;
+                    padding: 4px;
+                }
+            """)
+        else:
+            self.image_preview.setText("📷\n\nClick to upload\nproduct image")
+            self.image_preview.setStyleSheet("""
+                QLabel {
+                    background-color: #f9fafb;
+                    border: 2px dashed #d1d5db;
+                    border-radius: 14px;
+                    color: #9ca3af;
+                    font-size: 13px;
+                    padding: 10px;
+                }
+                QLabel:hover {
+                    border-color: #4f46e5;
+                    color: #4f46e5;
+                }
+            """)
+        self.image_preview.mousePressEvent = lambda e: self.browse_image()
+        left_layout.addWidget(self.image_preview, 0, Qt.AlignHCenter)
+
+        # Change photo button
+        browse_btn = QPushButton("Change Photo")
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f4f6;
+                color: #4f46e5;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                padding: 8px 0;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #4f46e5;
+                color: #ffffff;
+                border-color: #4f46e5;
+            }
+        """)
+        browse_btn.clicked.connect(self.browse_image)
+        left_layout.addWidget(browse_btn)
+
+        left_layout.addStretch()
+
+        # Required note
+        req_note = QLabel("* Required fields")
+        req_note.setStyleSheet("color: #9ca3af; font-size: 11px;")
+        left_layout.addWidget(req_note)
+
+        root.addWidget(left_panel)
+
+        # ── RIGHT PANEL: form ────────────────────────────────────────────────
+        right_panel = QWidget()
+        right_panel.setStyleSheet("background-color: #f9fafb;")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(32, 32, 32, 24)
+        right_layout.setSpacing(0)
+
+        # Header row
+        hdr = QHBoxLayout()
+        form_title = QLabel("Item Details")
+        form_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #111827;")
+        hdr.addWidget(form_title)
+        hdr.addStretch()
+
+        # Scrollable form area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent; border: none;")
+
+        form_container = QWidget()
+        form_container.setStyleSheet("background: transparent;")
+        form = QVBoxLayout(form_container)
+        form.setSpacing(6)
+        form.setContentsMargins(0, 0, 8, 0)
+
+        # ── Section: Basic Info ──
+        sec1 = self._section_header("Basic Information")
+        form.addWidget(sec1)
+        form.addSpacing(8)
+
+        grid1 = QGridLayout()
+        grid1.setSpacing(12)
+        grid1.setColumnStretch(0, 1)
+        grid1.setColumnStretch(1, 1)
+
+        # Product Name
+        grid1.addWidget(self._field_label("Product Name *"), 0, 0)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("e.g. Wireless Headphones")
+        grid1.addWidget(self.name_input, 1, 0)
 
         # SKU
-        layout.addWidget(QLabel("SKU"))
+        grid1.addWidget(self._field_label("SKU / Barcode"), 0, 1)
         self.sku_input = QLineEdit()
-        self.sku_input.setPlaceholderText("Enter SKU (optional)")
-        layout.addWidget(self.sku_input)
+        self.sku_input.setPlaceholderText("e.g. SKU-00123 (optional)")
+        grid1.addWidget(self.sku_input, 1, 1)
 
         # Category
-        layout.addWidget(QLabel("Category"))
+        grid1.addWidget(self._field_label("Category"), 2, 0)
+        cat_row = QHBoxLayout()
+        cat_row.setSpacing(6)
         self.category_combo = QComboBox()
-        self.category_combo.addItem("No Category", None)
-        for cat in self.db.get_all_categories():
-            self.category_combo.addItem(cat['name'], cat['id'])
-        layout.addWidget(self.category_combo)
+        self.category_combo.setFixedHeight(38)
+        self._refresh_category_combo()
+        cat_row.addWidget(self.category_combo, 1)
+
+        add_cat_btn = QPushButton("＋")
+        add_cat_btn.setCursor(Qt.PointingHandCursor)
+        add_cat_btn.setFixedSize(38, 38)
+        add_cat_btn.setToolTip("Add a new category")
+        add_cat_btn.setStyleSheet("""
+            QPushButton {
+                background: #ede9fe; color: #4f46e5;
+                border: 1.5px solid #c4b5fd; border-radius: 8px;
+                font-size: 18px; font-weight: 700;
+            }
+            QPushButton:hover { background: #4f46e5; color: white; border-color: #4f46e5; }
+        """)
+        add_cat_btn.clicked.connect(self._open_add_category)
+        cat_row.addWidget(add_cat_btn)
+
+        cat_widget = QWidget()
+        cat_widget.setStyleSheet("background: transparent;")
+        cat_widget.setLayout(cat_row)
+        grid1.addWidget(cat_widget, 3, 0)
 
         # Price
-        layout.addWidget(QLabel("Price *"))
+        grid1.addWidget(self._field_label("Price (Php) *"), 2, 1)
         self.price_input = QDoubleSpinBox()
+        self.price_input.setPrefix("₱ ")
         self.price_input.setMinimum(0.0)
         self.price_input.setMaximum(999999.99)
         self.price_input.setValue(0.0)
         self.price_input.setDecimals(2)
-        layout.addWidget(self.price_input)
+        self.price_input.setFixedHeight(38)
+        grid1.addWidget(self.price_input, 3, 1)
 
-        # Quantity
-        layout.addWidget(QLabel("Initial Quantity"))
+        form.addLayout(grid1)
+        form.addSpacing(20)
+
+        # ── Section: Inventory ──
+        sec2 = self._section_header("Inventory")
+        form.addWidget(sec2)
+        form.addSpacing(8)
+
+        grid2 = QGridLayout()
+        grid2.setSpacing(12)
+        grid2.setColumnStretch(0, 1)
+        grid2.setColumnStretch(1, 1)
+
+        grid2.addWidget(self._field_label("Initial Quantity"), 0, 0)
         self.quantity_input = QSpinBox()
         self.quantity_input.setMinimum(0)
         self.quantity_input.setMaximum(99999)
         self.quantity_input.setValue(0)
-        layout.addWidget(self.quantity_input)
+        self.quantity_input.setFixedHeight(38)
+        grid2.addWidget(self.quantity_input, 1, 0)
 
-        # Low Stock Threshold
-        layout.addWidget(QLabel("Low Stock Threshold"))
+        grid2.addWidget(self._field_label("Low Stock Alert Threshold"), 0, 1)
         self.threshold_input = QSpinBox()
         self.threshold_input.setMinimum(0)
         self.threshold_input.setMaximum(99999)
         self.threshold_input.setValue(10)
-        layout.addWidget(self.threshold_input)
+        self.threshold_input.setFixedHeight(38)
+        grid2.addWidget(self.threshold_input, 1, 1)
 
-        # Product Image
-        layout.addWidget(QLabel("Product Image"))
-        image_layout = QHBoxLayout()
-        self.image_input = QLineEdit()
-        self.image_input.setReadOnly(True)
-        self.image_input.setPlaceholderText("No image selected")
-        image_layout.addWidget(self.image_input)
+        form.addLayout(grid2)
+        form.addSpacing(20)
 
-        browse_btn = QPushButton("Browse")
-        browse_btn.setCursor(Qt.PointingHandCursor)
-        browse_btn.setStyleSheet("background: #3b82f6; color: white; font-weight: bold; padding: 8px; border-radius: 6px; border: none;")
-        browse_btn.clicked.connect(self.browse_image)
-        image_layout.addWidget(browse_btn)
-        layout.addLayout(image_layout)
+        # ── Section: Description ──
+        sec3 = self._section_header("Description")
+        form.addWidget(sec3)
+        form.addSpacing(8)
 
-        self.image_preview = QLabel("No image selected")
-        self.image_preview.setAlignment(Qt.AlignCenter)
-        self.image_preview.setFixedHeight(120)
-        self.image_preview.setStyleSheet("background: #f3f4f6; border: 1px dashed #d1d5db; border-radius: 10px; color: #6b7280; padding: 10px;")
-        layout.addWidget(self.image_preview)
-
-        self.image_path = None
-
-        # Description
-        layout.addWidget(QLabel("Description"))
         self.description_input = QTextEdit()
-        self.description_input.setPlaceholderText("Enter product description (optional)")
-        self.description_input.setFixedHeight(80)
-        layout.addWidget(self.description_input)
+        self.description_input.setPlaceholderText("Write a short product description (optional)…")
+        self.description_input.setFixedHeight(100)
+        form.addWidget(self.description_input)
 
-        # Buttons
-        button_layout = QHBoxLayout()
-        add_btn = QPushButton("Add Item")
-        add_btn.setStyleSheet("background: #10b981; color: white; font-weight: bold; padding: 10px; border-radius: 6px; border: none;")
-        add_btn.clicked.connect(self.add_item)
+        form.addStretch()
+        scroll.setWidget(form_container)
+        right_layout.addWidget(scroll, 1)
+        right_layout.addSpacing(20)
+
+        # ── Action Buttons ───────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("background: #e5e7eb; color: #374151; font-weight: bold; padding: 10px; border-radius: 6px; border: none;")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setFixedHeight(42)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f4f6;
+                color: #374151;
+                border: 1.5px solid #d1d5db;
+                border-radius: 10px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 0 24px;
+            }
+            QPushButton:hover {
+                background-color: #e5e7eb;
+                color: #111827;
+            }
+        """)
         cancel_btn.clicked.connect(self.reject)
 
-        button_layout.addWidget(add_btn)
-        button_layout.addWidget(cancel_btn)
-        layout.addLayout(button_layout)
+        # Pre-fill form if item_data is provided
+        if self.item_data:
+            self.name_input.setText(str(self.item_data.get('name', '')))
+            self.sku_input.setText(str(self.item_data.get('sku', '') or ''))
+            self.price_input.setValue(float(self.item_data.get('price', 0.0)))
+            self.quantity_input.setValue(int(self.item_data.get('quantity', 0)))
+            self.threshold_input.setValue(int(self.item_data.get('low_stock_threshold', 10)))
+            self.description_input.setText(str(self.item_data.get('description', '') or ''))
+            self._refresh_category_combo(select_id=self.item_data.get('category_id'))
+
+        add_btn = QPushButton("  ✓  Save Changes" if self.item_data else "  ＋  Add Item")
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setFixedHeight(42)
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4f46e5, stop:1 #6366f1);
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 0 32px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4338ca, stop:1 #4f46e5);
+            }
+            QPushButton:pressed {
+                background: #3730a3;
+            }
+        """)
+        add_btn.clicked.connect(self.add_item)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(add_btn)
+        right_layout.addLayout(btn_row)
+
+        root.addWidget(right_panel, 1)
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+    def _section_header(self, text):
+        lbl = QLabel(text.upper())
+        lbl.setStyleSheet("""
+            color: #4f46e5;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e5e7eb;
+        """)
+        return lbl
+
+    def _field_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #6b7280; font-size: 12px; font-weight: 600;")
+        return lbl
+
+    def _refresh_category_combo(self, select_id=None):
+        """Reload categories from the DB; optionally auto-select a specific id."""
+        self.category_combo.blockSignals(True)
+        self.category_combo.clear()
+        self.category_combo.addItem("— No Category —", None)
+        for cat in self.db.get_all_categories():
+            self.category_combo.addItem(cat['name'], cat['id'])
+            if select_id and cat['id'] == select_id:
+                self.category_combo.setCurrentIndex(self.category_combo.count() - 1)
+        self.category_combo.blockSignals(False)
+
+    def _open_add_category(self):
+        """Open the AddCategoryDialog and refresh the combo on success."""
+        dlg = AddCategoryDialog(self.db, self)
+        if dlg.exec() == QDialog.Accepted and dlg.new_category_id:
+            self._refresh_category_combo(select_id=dlg.new_category_id)
 
     def browse_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -279,7 +769,6 @@ class AddItemDialog(QDialog):
         )
         if file_path:
             self.image_path = file_path
-            self.image_input.setText(file_path)
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
                 self.image_preview.setPixmap(pixmap.scaled(
@@ -288,11 +777,33 @@ class AddItemDialog(QDialog):
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation
                 ))
+                self.image_preview.setStyleSheet("""
+                    QLabel {
+                        background-color: #f9fafb;
+                        border: 2px solid #4f46e5;
+                        border-radius: 14px;
+                        padding: 4px;
+                    }
+                """)
             else:
-                self.image_preview.setText("Preview unavailable")
+                self.image_preview.setText("⚠️ Preview unavailable")
         else:
             self.image_path = None
-            self.image_preview.setText("No image selected")
+            self.image_preview.setText("📷\n\nClick to upload\nproduct image")
+            self.image_preview.setStyleSheet("""
+                QLabel {
+                    background-color: #f9fafb;
+                    border: 2px dashed #d1d5db;
+                    border-radius: 14px;
+                    color: #9ca3af;
+                    font-size: 13px;
+                    padding: 10px;
+                }
+                QLabel:hover {
+                    border-color: #4f46e5;
+                    color: #4f46e5;
+                }
+            """)
 
     def add_item(self):
         """Add item to database."""
@@ -312,103 +823,204 @@ class AddItemDialog(QDialog):
         threshold = self.threshold_input.value()
         description = self.description_input.toPlainText().strip() or None
 
-        item_id = self.db.add_item(
-            name=name,
-            sku=sku,
-            category_id=category_id,
-            price=price,
-            quantity=quantity,
-            low_stock_threshold=threshold,
-            description=description,
-            image_path=self.image_path
-        )
-
-        if item_id:
-            QMessageBox.information(self, "Success", f"Item '{name}' added successfully!")
-            # Show QR code for the new item
-            item_data = {
-                'id': item_id,
-                'name': name,
-                'sku': sku,
-                'price': price,
-                'quantity': quantity
-            }
-            qr_dialog = QRCodeDialog(item_data, self)
-            qr_dialog.exec()
-            self.accept()
+        if self.item_data:
+            success = self.db.update_item(
+                self.item_data['id'],
+                name=name,
+                sku=sku,
+                category_id=category_id,
+                price=price,
+                low_stock_threshold=threshold,
+                description=description,
+                image_path=self.image_path
+            )
+            
+            # Update quantity if changed
+            if success and int(self.item_data.get('quantity', 0)) != quantity:
+                self.db.update_quantity(self.item_data['id'], quantity, "UPDATE", notes="Manual stock adjustment")
+                
+            if success:
+                self.accept()
+                parent = self.parent()
+                if parent:
+                    toast = ToastNotification(f"✓  '{name}' updated successfully", parent)
+                    toast.show_toast()
+            else:
+                QMessageBox.critical(self, "Error", "Failed to update item. SKU might already exist.")
         else:
-            QMessageBox.critical(self, "Error", "Failed to add item. SKU might already exist.")
+            item_id = self.db.add_item(
+                name=name,
+                sku=sku,
+                category_id=category_id,
+                price=price,
+                quantity=quantity,
+                low_stock_threshold=threshold,
+                description=description,
+                image_path=self.image_path
+            )
+
+            if item_id:
+                self.accept()
+                parent = self.parent()
+                if parent:
+                    toast = ToastNotification(f"✓  '{name}' added to inventory", parent)
+                    toast.show_toast()
+            else:
+                QMessageBox.critical(self, "Error", "Failed to add item. SKU might already exist.")
 
 class DeleteItemDialog(QDialog):
-    """Dialog for deleting an item."""
-    def __init__(self, db, parent=None):
+    """Dialog for confirming deletion of a specific item."""
+    def __init__(self, db, item_data, parent=None):
         super().__init__(parent)
         self.db = db
-        self.setWindowTitle("Delete Item")
-        self.setGeometry(100, 100, 400, 300)
+        self.item_data = item_data
         self.deleted_item = False
+        self.setWindowTitle("Delete Item")
+        self.setFixedSize(420, 300)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+            }
+            QLabel {
+                color: #111827;
+            }
+        """)
         self._build_ui()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(32, 32, 32, 28)
+        layout.setSpacing(0)
 
-        layout.addWidget(QLabel("Select Item to Delete:"))
-        self.item_combo = QComboBox()
+        # Icon + title row
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
 
-        items = self.db.get_all_items()
-        if not items:
-            self.item_combo.addItem("No items available", None)
-            self.item_combo.setEnabled(False)
-        else:
-            for item in items:
-                display_text = f"{item['name']} - Php {float(item['price']):.2f} (Stock: {item['quantity']})"
-                self.item_combo.addItem(display_text, item['id'])
+        icon_lbl = QLabel("🗑️")
+        icon_lbl.setFixedSize(44, 44)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet("""
+            background-color: #fee2e2;
+            border-radius: 10px;
+            font-size: 20px;
+        """)
+        title_row.addWidget(icon_lbl)
 
-        layout.addWidget(self.item_combo)
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        heading = QLabel("Delete Item")
+        heading.setStyleSheet("font-size: 17px; font-weight: 700; color: #111827;")
+        title_col.addWidget(heading)
+        sub = QLabel("This action cannot be undone.")
+        sub.setStyleSheet("font-size: 12px; color: #6b7280;")
+        title_col.addWidget(sub)
+        title_row.addLayout(title_col)
+        title_row.addStretch()
 
-        # Warning
-        warning = QLabel("⚠️ Warning: This action cannot be undone!")
-        warning.setStyleSheet("color: #ef4444; font-weight: bold;")
-        layout.addWidget(warning)
+        layout.addLayout(title_row)
+        layout.addSpacing(20)
 
-        # Buttons
-        button_layout = QHBoxLayout()
-        delete_btn = QPushButton("Delete Item")
-        delete_btn.setStyleSheet("background: #FF3737; color: white; font-weight: bold; padding: 10px; border-radius: 6px; border: none;")
-        delete_btn.clicked.connect(self.delete_item)
+        # Divider
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet("color: #e5e7eb;")
+        layout.addWidget(div)
+        layout.addSpacing(20)
+
+        # Item summary card
+        item_card = QFrame()
+        item_card.setStyleSheet("""
+            QFrame {
+                background-color: #fef2f2;
+                border: 1px solid #fecaca;
+                border-radius: 10px;
+            }
+        """)
+        card_layout = QVBoxLayout(item_card)
+        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setSpacing(4)
+
+        item_name = QLabel(str(self.item_data.get('name', 'Unknown Item')))
+        item_name.setStyleSheet("font-size: 14px; font-weight: 700; color: #991b1b;")
+        card_layout.addWidget(item_name)
+
+        price = float(self.item_data.get('price', 0))
+        qty = self.item_data.get('quantity', 0)
+        sku = self.item_data.get('sku') or 'N/A'
+        details_lbl = QLabel(f"SKU: {sku}  ·  Price: Php {price:.2f}  ·  Stock: {qty}")
+        details_lbl.setStyleSheet("font-size: 12px; color: #b91c1c;")
+        card_layout.addWidget(details_lbl)
+
+        layout.addWidget(item_card)
+        layout.addSpacing(24)
+
+        # Action buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("background: #e5e7eb; color: #374151; font-weight: bold; padding: 10px; border-radius: 6px; border: none;")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f4f6;
+                color: #374151;
+                border: 1.5px solid #d1d5db;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 0 20px;
+            }
+            QPushButton:hover { background-color: #e5e7eb; color: #111827; }
+        """)
         cancel_btn.clicked.connect(self.reject)
 
-        button_layout.addWidget(delete_btn)
-        button_layout.addWidget(cancel_btn)
-        layout.addLayout(button_layout)
+        delete_btn = QPushButton("Delete Item")
+        delete_btn.setCursor(Qt.PointingHandCursor)
+        delete_btn.setFixedHeight(40)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #dc2626, stop:1 #ef4444);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 0 24px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #b91c1c, stop:1 #dc2626);
+            }
+            QPushButton:pressed { background: #991b1b; }
+        """)
+        delete_btn.clicked.connect(self.delete_item)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(delete_btn)
+        layout.addLayout(btn_row)
 
     def delete_item(self):
-        """Delete selected item from database."""
-        item_id = self.item_combo.currentData()
+        """Delete the item from the database."""
+        item_id = self.item_data.get('id')
         if item_id is None:
-            QMessageBox.warning(self, "Error", "No item selected!")
             return
 
-        # Confirm deletion
-        reply = QMessageBox.question(
-            self,
-            "Confirm Deletion",
-            "Are you sure you want to delete this item? This action cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
-            if self.db.delete_item(item_id):
-                QMessageBox.information(self, "Success", "Item deleted successfully!")
-                self.deleted_item = True
-                self.accept()
-            else:
-                QMessageBox.critical(self, "Error", "Failed to delete item.")
+        if self.db.delete_item(item_id):
+            self.deleted_item = True
+            self.accept()
+            # Show toast on parent
+            parent = self.parent()
+            if parent:
+                item_name = self.item_data.get('name', 'Item')
+                toast = ToastNotification(f"🗑️  '{item_name}' deleted from inventory", parent)
+                toast.show_toast()
+        else:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", "Failed to delete item.")
 
 
 class QRCodeDialog(QDialog):
@@ -478,20 +1090,49 @@ class ItemInfoPage(QWidget):
     def __init__(self, db=None):
         super().__init__()
         self.db = db or InventoryDatabase()
-        self.setStyleSheet("background-color: #ffffff;")
+        self.setStyleSheet("background-color: #f9fafb;")
         self.current_mode = "list"
         self.search_term = ""
+        self.current_item = None  # Track the currently selected/displayed item
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(35, 30, 35, 30)
-        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(24, 20, 24, 24)
+        main_layout.setSpacing(16)
 
         # 1. HEADER with Toggle Button
         header = QHBoxLayout()
         title = QLabel("Item Information")
-        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #1e293b;")
+        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #111827;")
         header.addWidget(title)
         header.addStretch()
+
+        # Add Item Button (Icon)
+        self.add_btn_icon = QPushButton("➕")
+        self.add_btn_icon.setCursor(Qt.PointingHandCursor)
+        self.add_btn_icon.setFixedSize(40, 40)
+        self.add_btn_icon.setStyleSheet("""
+            QPushButton {
+                background: #10b981; font-size: 20px; border-radius: 8px; border: none;
+            }
+            QPushButton:hover { background: #059669; }
+        """)
+        self.add_btn_icon.clicked.connect(self.show_add_dialog)
+        header.addWidget(self.add_btn_icon)
+        header.setSpacing(8)
+
+        # Refresh Button (Icon)
+        self.refresh_btn_icon = QPushButton("🔄")
+        self.refresh_btn_icon.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn_icon.setFixedSize(40, 40)
+        self.refresh_btn_icon.setStyleSheet("""
+            QPushButton {
+                background: #6b7280; font-size: 20px; border-radius: 8px; border: none;
+            }
+            QPushButton:hover { background: #4b5563; }
+        """)
+        self.refresh_btn_icon.clicked.connect(self.refresh_items)
+        header.addWidget(self.refresh_btn_icon)
+        header.setSpacing(10)
 
         # Grid/List Switch
         self.toggle_btn = QPushButton("Grid View")
@@ -532,6 +1173,7 @@ class ItemInfoPage(QWidget):
 
         # 2. VIEW STACK (The area that changes)
         self.view_stack = QStackedWidget()
+        self.view_stack.setStyleSheet("background-color: #f9fafb; border: none;")
 
         # List View
         list_view_page = QWidget()
@@ -539,15 +1181,15 @@ class ItemInfoPage(QWidget):
         list_page_layout.setContentsMargins(0, 0, 0, 0)
         list_page_layout.setSpacing(0)
 
-        # List Legend
+        # List Legend - styled as header in white card
         legend_panel = QFrame()
-        legend_panel.setFixedHeight(40)
+        legend_panel.setFixedHeight(45)
         legend_panel.setStyleSheet("""
-            QFrame { background-color: #f8fafc; border-bottom: 1px solid #e5e7eb; }
-            QLabel { color: #64748b; font-weight: bold; font-size: 11px; }
+            QFrame { background-color: #ffffff; border: 1px solid #e5e7eb; border-top-left-radius: 12px; border-top-right-radius: 12px; }
+            QLabel { color: #6b7280; font-weight: bold; font-size: 11px; border: none; }
         """)
         legend_layout = QHBoxLayout(legend_panel)
-        legend_layout.setContentsMargins(20, 0, 20, 0)
+        legend_layout.setContentsMargins(18, 0, 18, 0)
         legend_layout.addSpacing(60)
         legend_layout.addWidget(QLabel("PRODUCT NAME"), 2)
         legend_layout.addWidget(QLabel("PRICE"), 1)
@@ -559,11 +1201,14 @@ class ItemInfoPage(QWidget):
         # 3. The Scroll Panel for List View
         list_scroll = QScrollArea()
         list_scroll.setWidgetResizable(True)
-        list_scroll.setStyleSheet("border: none; background: transparent;")
+        list_scroll.setFrameShape(QFrame.NoFrame)
+        list_scroll.setStyleSheet("border: none; background: #ffffff; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;")
         list_container = QWidget()
+        list_container.setStyleSheet("background: #ffffff;")
         self.list_layout = QVBoxLayout(list_container)
         self.list_layout.setAlignment(Qt.AlignTop)
-        self.list_layout.setSpacing(12)
+        self.list_layout.setSpacing(10)
+        list_container.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e7eb; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;")
         list_scroll.setWidget(list_container)
         list_page_layout.addWidget(list_scroll)
         self.view_stack.addWidget(list_view_page)
@@ -571,11 +1216,14 @@ class ItemInfoPage(QWidget):
         # Create Grid View
         grid_scroll = QScrollArea()
         grid_scroll.setWidgetResizable(True)
-        grid_scroll.setStyleSheet("border: 1px; background: transparent;")
+        grid_scroll.setFrameShape(QFrame.NoFrame)
+        grid_scroll.setStyleSheet("border: none; background: #ffffff; border-radius: 12px;")
         grid_container = QWidget()
+        grid_container.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;")
         self.grid_layout = QGridLayout(grid_container)
         self.grid_layout.setAlignment(Qt.AlignTop)
-        self.grid_layout.setSpacing(20)
+        self.grid_layout.setSpacing(16)
+        self.grid_layout.setContentsMargins(18, 16, 18, 16)
         grid_scroll.setWidget(grid_container)
         self.view_stack.addWidget(grid_scroll)
 
@@ -583,35 +1231,15 @@ class ItemInfoPage(QWidget):
         self.detail_panel = self._create_detail_panel()
         self.refresh_items()
 
-        # Content row with item views and detail panel
+        # Content row with item views and detail panel - now expandable
         content_row = QHBoxLayout()
         content_row.setSpacing(20)
         content_row.addWidget(self.view_stack, 3)
         content_row.addWidget(self.detail_panel, 1)
 
-        # 3. FIXED FOOTER
-        footer = QFrame()
-        footer.setFixedHeight(70)
-        footer.setStyleSheet("QFrame { background-color: white; border-radius: 12px; border: 1px solid #e5e7eb; }")
-        footer_layout = QHBoxLayout(footer)
-        del_btn = QPushButton("Delete Item")
-        del_btn.setStyleSheet("color : #FF3737; font-weight: bold; padding: 10px 20px; border: none;")
-        del_btn.clicked.connect(self.show_delete_dialog)
-        add_btn = QPushButton("Add Item")
-        add_btn.setStyleSheet("color: #10b981; font-weight: bold; padding: 10px 20px; border: none;")
-        add_btn.clicked.connect(self.show_add_dialog)
-        refresh_btn = QPushButton("Refresh Page")
-        refresh_btn.setStyleSheet("color: grey; font-weight: bold; padding: 10px 20px; border: none;")
-        refresh_btn.clicked.connect(self.refresh_items)
-
-        # Layout
+        # Add layouts to main
         main_layout.addLayout(header)
-        main_layout.addLayout(content_row)
-        footer_layout.addWidget(del_btn)
-        footer_layout.addWidget(add_btn)
-        footer_layout.addStretch()
-        footer_layout.addWidget(refresh_btn)
-        main_layout.addWidget(footer)
+        main_layout.addLayout(content_row, 1)  # Add stretch factor to content
 
     def refresh_items(self):
         """Refresh item lists from database."""
@@ -657,12 +1285,42 @@ class ItemInfoPage(QWidget):
             QLabel { color: #111827; }
         """)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(20, 20, 20, 20)
-        panel_layout.setSpacing(15)
+        panel_layout.setContentsMargins(18, 16, 18, 18)
+        panel_layout.setSpacing(12)
 
+        # Header with delete button icon
+        header_layout = QHBoxLayout()
         heading = QLabel("Item Details")
         heading.setStyleSheet("font-size: 20px; font-weight: 700; color: #111827; border: none;")
-        panel_layout.addWidget(heading)
+        header_layout.addWidget(heading)
+        header_layout.addStretch()
+        
+        self.update_icon_btn = QPushButton("✏️")
+        self.update_icon_btn.setCursor(Qt.PointingHandCursor)
+        self.update_icon_btn.setFixedSize(32, 32)
+        self.update_icon_btn.setStyleSheet("""
+            QPushButton {
+                background: #e0e7ff; font-size: 16px; border-radius: 6px; border: none;
+            }
+            QPushButton:hover { background: #c7d2fe; }
+        """)
+        self.update_icon_btn.clicked.connect(self.show_update_dialog)
+        self.update_icon_btn.setVisible(False)
+        header_layout.addWidget(self.update_icon_btn)
+
+        self.delete_icon_btn = QPushButton("🗑️")
+        self.delete_icon_btn.setCursor(Qt.PointingHandCursor)
+        self.delete_icon_btn.setFixedSize(32, 32)
+        self.delete_icon_btn.setStyleSheet("""
+            QPushButton {
+                background: #fee2e2; font-size: 16px; border-radius: 6px; border: none;
+            }
+            QPushButton:hover { background: #fecaca; }
+        """)
+        self.delete_icon_btn.clicked.connect(self.show_delete_dialog)
+        self.delete_icon_btn.setVisible(False)
+        header_layout.addWidget(self.delete_icon_btn)
+        panel_layout.addLayout(header_layout)
 
         self.detail_image = QLabel("No item selected")
         self.detail_image.setFixedHeight(180)
@@ -721,6 +1379,9 @@ class ItemInfoPage(QWidget):
 
     def display_item_details(self, item_data):
         item_data = dict(item_data)  # Convert from RowProxy to dict if needed
+        self.current_item = item_data  # Track currently displayed item
+        self.update_icon_btn.setVisible(True) # Show update button
+        self.delete_icon_btn.setVisible(True)  # Show delete button
         image_path = item_data.get('image_path')
         if image_path and Path(image_path).exists():
             img = QPixmap(image_path)
@@ -754,13 +1415,42 @@ class ItemInfoPage(QWidget):
             self.item_changed.emit()  # Notify dashboard of change
             self.refresh_items()  # Refresh to show new item
 
-    def show_delete_dialog(self):
-        """Show dialog to delete an item."""
-        dialog = DeleteItemDialog(self.db, self)
-        if dialog.exec() == QDialog.Accepted and dialog.deleted_item:
-            self.search_input.clear()  # Clear search
-            self.refresh_items()  # Refresh after deletion
+    def show_update_dialog(self):
+        """Show dialog to update the currently displayed item."""
+        if not self.current_item:
+            return
+        dialog = AddItemDialog(self.db, self, item_data=self.current_item)
+        if dialog.exec() == QDialog.Accepted:
             self.item_changed.emit()  # Notify dashboard of change
+            self.refresh_items()  # Refresh to show updated item
+            # Re-fetch the updated item to display it correctly
+            updated_item = self.db.get_item(self.current_item['id'])
+            if updated_item:
+                items = self.db.search_items(updated_item['name'])
+                for itm in items:
+                    if itm['id'] == updated_item['id']:
+                        self.display_item_details(itm)
+                        break
+
+    def show_delete_dialog(self):
+        """Show dialog to delete the currently displayed item."""
+        if not self.current_item:
+            return
+        dialog = DeleteItemDialog(self.db, self.current_item, self)
+        if dialog.exec() == QDialog.Accepted and dialog.deleted_item:
+            # Reset the detail panel to empty state
+            self.current_item = None
+            self.update_icon_btn.setVisible(False)
+            self.delete_icon_btn.setVisible(False)
+            self.detail_image.setPixmap(QPixmap())
+            self.detail_image.setText("No item selected")
+            self.detail_name.setText("Select an item to view details")
+            self.detail_meta.setText("<i>SKU, category, price, and stock will appear here.</i>")
+            self.detail_description.setText("Select an item from the list or grid to see more information and the QR code.")
+            self.detail_qr.setPixmap(QPixmap())
+            self.search_input.clear()
+            self.refresh_items()
+            self.item_changed.emit()
 
     def item_sorter(self, default_text="Sort by..."):
         itemSorter_btn = QPushButton(default_text)
