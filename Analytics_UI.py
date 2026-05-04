@@ -1043,6 +1043,7 @@ class AnalyticsPage(QWidget):
         self.db = db
         self.adb = AnalyticsDB(db)
         self.current_days = 7
+        self.setStyleSheet("background: #f9fafb;")
         self._build_ui()
         self.refresh()
         self._timer = QTimer(self)
@@ -1055,110 +1056,276 @@ class AnalyticsPage(QWidget):
         root.setSpacing(0)
 
         # ── Header ──────────────────────────────────────────
-        header = QFrame()
-        header.setStyleSheet("""
-            QFrame { background:#111827; border:none; }
-            QLabel { background:transparent; border:none; }
-        """)
-        header.setFixedHeight(64)
-        h_lay = QHBoxLayout(header)
-        h_lay.setContentsMargins(28, 0, 28, 0)
+        hdr_widget = QWidget()
+        hdr_widget.setStyleSheet("background: #f9fafb;")
+        hdr_lay = QHBoxLayout(hdr_widget)
+        hdr_lay.setContentsMargins(24, 20, 24, 14)
+        hdr_lay.setSpacing(10)
 
-        title = QLabel("📈  Deep Analytics")
-        title.setStyleSheet("font-size:20px; font-weight:800; color:#ffffff;")
+        title = QLabel("🔮  Restock Forecast")
+        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #111827; border: none;")
+        hdr_lay.addWidget(title)
+        hdr_lay.addStretch()
 
         self.period_combo = QComboBox()
         self.period_combo.addItems(list(self.PERIOD_DAYS.keys()))
-        self.period_combo.setFixedWidth(120)
+        self.period_combo.setFixedWidth(130)
         self.period_combo.setStyleSheet("""
-            QComboBox { background:#1f2937; border:1px solid #374151;
-                border-radius:8px; padding:6px 12px; font-size:13px; color:#e5e7eb; }
-            QComboBox:hover { border-color:#6366f1; }
-            QComboBox::drop-down { border:none; }
-            QComboBox QAbstractItemView { background:#1f2937; color:#e5e7eb;
-                selection-background-color:#6366f1; }
+            QComboBox {
+                background: #ffffff;
+                border: 1.5px solid #d1d5db;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 12px;
+                color: #111827;
+                font-weight: 600;
+            }
+            QComboBox:hover { border-color: #4f46e5; }
+            QComboBox::drop-down { border: none; padding-right: 6px; }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                border: 1px solid #d1d5db;
+                color: #374151;
+                selection-background-color: #f3f4f6;
+                selection-color: #4f46e5;
+                outline: none;
+            }
         """)
         self.period_combo.currentTextChanged.connect(self._on_period_change)
+        hdr_lay.addWidget(self.period_combo)
 
         refresh_btn = QPushButton("⟳  Refresh")
         refresh_btn.setCursor(Qt.PointingHandCursor)
         refresh_btn.setFixedHeight(36)
         refresh_btn.setStyleSheet("""
-            QPushButton { background:#6366f1; color:white; border-radius:8px;
-                padding:0 16px; font-size:13px; font-weight:600; border:none; }
-            QPushButton:hover { background:#4f46e5; }
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4f46e5, stop:1 #6366f1);
+                color: white;
+                border-radius: 8px;
+                padding: 0 16px;
+                font-size: 13px;
+                font-weight: 600;
+                border: none;
+            }
+            QPushButton:hover { background: #4338ca; }
         """)
         refresh_btn.clicked.connect(self.refresh)
+        hdr_lay.addWidget(refresh_btn)
+        root.addWidget(hdr_widget)
 
-        h_lay.addWidget(title)
-        h_lay.addStretch()
-        h_lay.addWidget(self.period_combo)
-        h_lay.addSpacing(8)
-        h_lay.addWidget(refresh_btn)
-        root.addWidget(header)
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #e5e7eb; max-height: 1px; border: none;")
+        root.addWidget(line)
 
-        # ── Tab bar ──────────────────────────────────────────
-        tab_bar = QFrame()
-        tab_bar.setStyleSheet("QFrame { background:#1f2937; border:none; }")
-        tab_bar.setFixedHeight(46)
-        tab_lay = QHBoxLayout(tab_bar)
-        tab_lay.setContentsMargins(24, 0, 24, 0)
-        tab_lay.setSpacing(4)
-
-        self.tab_btns = []
-        self.tab_stack = QStackedWidget()
-        self.tab_stack.setStyleSheet("background:#f9fafb;")
-
-        self.sales_tab    = SalesAnalysisTab(self.adb)
-        self.health_tab   = InventoryHealthTab(self.adb)
-        self.restock_tab  = RestockForecastTab(self.adb)
-
-        tab_defs = [
-            ("📊  Sales Analysis",     self.sales_tab),
-            ("🏥  Inventory Health",   self.health_tab),
-            ("🔮  Restock Forecast",   self.restock_tab),
-        ]
-
-        for idx, (label, widget) in enumerate(tab_defs):
-            self.tab_stack.addWidget(widget)
-            btn = QPushButton(label)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda _, i=idx: self._switch_tab(i))
-            tab_lay.addWidget(btn)
-            self.tab_btns.append(btn)
-
-        tab_lay.addStretch()
-        root.addWidget(tab_bar)
-        root.addWidget(self.tab_stack)
-
-        self._switch_tab(0)
-
-    TAB_ACTIVE = """
-        QPushButton { background:#6366f1; color:white; border-radius:6px;
-            padding:0 16px; font-size:12px; font-weight:700; border:none; }
-    """
-    TAB_INACTIVE = """
-        QPushButton { background:transparent; color:#9ca3af; border-radius:6px;
-            padding:0 16px; font-size:12px; font-weight:500; border:none; }
-        QPushButton:hover { background:#374151; color:#e5e7eb; }
-    """
-
-    def _switch_tab(self, idx):
-        self.tab_stack.setCurrentIndex(idx)
-        for i, btn in enumerate(self.tab_btns):
-            btn.setStyleSheet(self.TAB_ACTIVE if i == idx else self.TAB_INACTIVE)
+        # ── Content ──────────────────────────────────────────
+        self.restock_tab = RestockForecastTab(self.adb)
+        root.addWidget(self.restock_tab, 1)
 
     def _on_period_change(self, text):
         self.current_days = self.PERIOD_DAYS[text]
         self.refresh()
 
     def refresh(self):
-        days = self.current_days
-        self.sales_tab.refresh(days)
-        self.health_tab.refresh(days)
-        self.restock_tab.refresh(days)
+        self.restock_tab.refresh(self.current_days)
+
+
+# ═══════════════════════════════════════════════════════════
+#  SALES ANALYSIS STANDALONE SIDEBAR PAGE
+# ═══════════════════════════════════════════════════════════
+
+class SalesAnalysisStandalonePage(QWidget):
+    """Sales Analysis extracted as a full sidebar page."""
+    PERIOD_DAYS = {"7 Days": 7, "30 Days": 30, "90 Days": 90}
+
+    def __init__(self, db: InventoryDatabase, parent=None):
+        super().__init__(parent)
+        self.adb = AnalyticsDB(db)
+        self.current_days = 7
+        self.setStyleSheet("background: #f9fafb;")
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Header ──────────────────────────────────────────
+        hdr_widget = QWidget()
+        hdr_widget.setStyleSheet("background: #f9fafb;")
+        hdr_lay = QHBoxLayout(hdr_widget)
+        hdr_lay.setContentsMargins(24, 20, 24, 14)
+        hdr_lay.setSpacing(10)
+
+        title = QLabel("💰  Sales Analysis")
+        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #111827; border: none;")
+        hdr_lay.addWidget(title)
+        hdr_lay.addStretch()
+
+        self.period_combo = QComboBox()
+        self.period_combo.addItems(list(self.PERIOD_DAYS.keys()))
+        self.period_combo.setFixedWidth(130)
+        self.period_combo.setStyleSheet("""
+            QComboBox {
+                background: #ffffff;
+                border: 1.5px solid #d1d5db;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 12px;
+                color: #111827;
+                font-weight: 600;
+            }
+            QComboBox:hover { border-color: #4f46e5; }
+            QComboBox::drop-down { border: none; padding-right: 6px; }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                border: 1px solid #d1d5db;
+                color: #374151;
+                selection-background-color: #f3f4f6;
+                selection-color: #4f46e5;
+                outline: none;
+            }
+        """)
+        self.period_combo.currentTextChanged.connect(self._on_period_change)
+        hdr_lay.addWidget(self.period_combo)
+
+        refresh_btn = QPushButton("⟳  Refresh")
+        refresh_btn.setCursor(Qt.PointingHandCursor)
+        refresh_btn.setFixedHeight(36)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4f46e5, stop:1 #6366f1);
+                color: white;
+                border-radius: 8px;
+                padding: 0 16px;
+                font-size: 13px;
+                font-weight: 600;
+                border: none;
+            }
+            QPushButton:hover { background: #4338ca; }
+        """)
+        refresh_btn.clicked.connect(self.refresh)
+        hdr_lay.addWidget(refresh_btn)
+        root.addWidget(hdr_widget)
+
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #e5e7eb; max-height: 1px; border: none;")
+        root.addWidget(line)
+
+        # Sales tab (has its own scroll area + padding)
+        self.sales_tab = SalesAnalysisTab(self.adb)
+        root.addWidget(self.sales_tab, 1)
+
+    def _on_period_change(self, text):
+        self.current_days = self.PERIOD_DAYS[text]
+        self.refresh()
+
+    def refresh(self):
+        self.sales_tab.refresh(self.current_days)
+
+
+# ═══════════════════════════════════════════════════════════
+#  INVENTORY HEALTH STANDALONE SIDEBAR PAGE
+# ═══════════════════════════════════════════════════════════
+
+class InventoryHealthStandalonePage(QWidget):
+    """Inventory Health extracted as a full sidebar page."""
+    PERIOD_DAYS = {"7 Days": 7, "30 Days": 30, "90 Days": 90}
+
+    def __init__(self, db: InventoryDatabase, parent=None):
+        super().__init__(parent)
+        self.adb = AnalyticsDB(db)
+        self.current_days = 7
+        self.setStyleSheet("background: #f9fafb;")
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Header ──────────────────────────────────────────
+        hdr_widget = QWidget()
+        hdr_widget.setStyleSheet("background: #f9fafb;")
+        hdr_lay = QHBoxLayout(hdr_widget)
+        hdr_lay.setContentsMargins(24, 20, 24, 14)
+        hdr_lay.setSpacing(10)
+
+        title = QLabel("🏥  Inventory Health")
+        title.setStyleSheet(
+            "font-size: 22px; font-weight: 700; color: #111827; border: none;")
+        hdr_lay.addWidget(title)
+        hdr_lay.addStretch()
+
+        self.period_combo = QComboBox()
+        self.period_combo.addItems(list(self.PERIOD_DAYS.keys()))
+        self.period_combo.setFixedWidth(130)
+        self.period_combo.setStyleSheet("""
+            QComboBox {
+                background: #ffffff;
+                border: 1.5px solid #d1d5db;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 12px;
+                color: #111827;
+                font-weight: 600;
+            }
+            QComboBox:hover { border-color: #4f46e5; }
+            QComboBox::drop-down { border: none; padding-right: 6px; }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                border: 1px solid #d1d5db;
+                color: #374151;
+                selection-background-color: #f3f4f6;
+                selection-color: #4f46e5;
+                outline: none;
+            }
+        """)
+        self.period_combo.currentTextChanged.connect(self._on_period_change)
+        hdr_lay.addWidget(self.period_combo)
+
+        refresh_btn = QPushButton("⟳  Refresh")
+        refresh_btn.setCursor(Qt.PointingHandCursor)
+        refresh_btn.setFixedHeight(36)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4f46e5, stop:1 #6366f1);
+                color: white;
+                border-radius: 8px;
+                padding: 0 16px;
+                font-size: 13px;
+                font-weight: 600;
+                border: none;
+            }
+            QPushButton:hover { background: #4338ca; }
+        """)
+        refresh_btn.clicked.connect(self.refresh)
+        hdr_lay.addWidget(refresh_btn)
+        root.addWidget(hdr_widget)
+
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet(
+            "background-color: #e5e7eb; max-height: 1px; border: none;")
+        root.addWidget(line)
+
+        # Health tab (has its own scroll area + padding)
+        self.health_tab = InventoryHealthTab(self.adb)
+        root.addWidget(self.health_tab, 1)
+
+    def _on_period_change(self, text):
+        self.current_days = self.PERIOD_DAYS[text]
+        self.refresh()
+
+    def refresh(self):
+        self.health_tab.refresh(self.current_days)
 
 
 # ═══════════════════════════════════════════════════════════
