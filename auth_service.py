@@ -1,9 +1,9 @@
-from database import InventoryDatabase
+# auth_service.py — AuthService accepts an existing InventoryDatabase instance
 
 class AuthService:
-    def __init__(self, db_path="inventory.db"):
-        """Initialize AuthService with database connection."""
-        self.db = InventoryDatabase(db_path)
+    def __init__(self, db):
+        """Initialize AuthService with an existing database instance."""
+        self.db = db
         self.current_user = None
         self._ensure_default_user()
 

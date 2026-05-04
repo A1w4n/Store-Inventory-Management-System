@@ -12,7 +12,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from Item_Info_UI import ItemInfoPage
-from Analytics_UI import AnalyticsPage
+from Analytics_UI import AnalyticsPage, SalesAnalysisStandalonePage, InventoryHealthStandalonePage
+from StaffAccess_UI import StaffAccessPage
 from database import InventoryDatabase
 
 class DashboardCard(QFrame):
@@ -108,7 +109,7 @@ class BestSellerWidget(QFrame):
         layout.setSpacing(10)
 
         if best_seller_data:
-            item_id, item_name, price, quantity, image_path, total_sold = best_seller_data
+            item_id, item_name, price, quantity, image_path, total_sold = best_seller_data       
         else:
             item_name = "No Data"
             price = 0
@@ -219,7 +220,15 @@ class InventoryDashboard(QWidget):
         sidebar_layout.addWidget(brand_name, 0, Qt.AlignCenter)
 
         self.nav_buttons = {}
-        nav_links = [("📊 Dashboard", 0), ("📦 Item Info", 1), ("📈 Analytics", 2), ("About", 3),("⚙️ Settings", 4)]
+        nav_links = [
+            ("📊 Dashboard",        0),
+            ("📦 Item Info",        1),
+            ("💰 Sales Analysis",   2),
+            ("🏥 Inventory Health", 3),
+            ("📈 Restock Forecast", 4),
+            ("🔑 Staff Access",     5),
+            ("⚙️ Settings",         6),
+        ]
         
         for text, index in nav_links:
             btn = QPushButton(text)
@@ -234,18 +243,35 @@ class InventoryDashboard(QWidget):
 
         # --- STACKED CONTENT AREA ---
         self.content_stack = QStackedWidget()
-        self.content_stack.setStyleSheet ("background-color : white;")
+        self.content_stack.setStyleSheet("background-color: #f9fafb;")
         self.dashboard_page = QWidget()
         self._setup_dashboard_page()
         
+        # 0: Dashboard
         self.content_stack.addWidget(self.dashboard_page)
-        # Adding placeholders for other pages to avoid index errors
+        
+        # 1: Item Info
         self.item_info_page = ItemInfoPage(self.db)
         self.item_info_page.item_changed.connect(self._refresh_all_stats)
-        self.content_stack.insertWidget(1, self.item_info_page)
+        self.content_stack.addWidget(self.item_info_page)
+        
+        # 2: Sales Analysis
+        self.sales_analysis_page = SalesAnalysisStandalonePage(self.db)
+        self.content_stack.addWidget(self.sales_analysis_page)
+        
+        # 3: Inventory Health
+        self.inventory_health_page = InventoryHealthStandalonePage(self.db)
+        self.content_stack.addWidget(self.inventory_health_page)
+        
+        # 4: Restock Forecast
         self.analytics_page = AnalyticsPage(self.db)
         self.content_stack.addWidget(self.analytics_page)   
-        self.content_stack.addWidget(QLabel("About Page Placeholder"))
+        
+        # 5: Staff Access
+        self.staff_access_page = StaffAccessPage()
+        self.content_stack.addWidget(self.staff_access_page)
+        
+        # 6: Settings
         self.content_stack.addWidget(QLabel("Settings Page Placeholder"))
         
         self.outer_layout.addWidget(self.content_stack)
@@ -254,9 +280,9 @@ class InventoryDashboard(QWidget):
 
     def _setup_dashboard_page(self):
         layout = QVBoxLayout(self.dashboard_page)
-        layout.setContentsMargins(35, 30, 35, 15)
-        layout.setSpacing(8)
-        self.dashboard_page.setStyleSheet("background-color: #ffffff;")
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
+        self.dashboard_page.setStyleSheet("background-color: #f9fafb;")
 
         # Title
         title = QHBoxLayout()
@@ -416,9 +442,13 @@ class InventoryDashboard(QWidget):
     def switch_page(self, index):
         self.content_stack.setCurrentIndex(index)
         
-        # Refresh dashboard when switching to it
+        # Refresh the active page when switching to it
         if index == 0:
             self._refresh_all_stats()
+        elif index == 2:
+            self.sales_analysis_page.refresh()
+        elif index == 3:
+            self.inventory_health_page.refresh()
     
         for btn_index, btn in self.nav_buttons.items():
             if btn_index == index:
@@ -482,6 +512,7 @@ class InventoryDashboard(QWidget):
 
         if self.stats_layout and self.best_seller_widget:
             self.best_seller_widget.deleteLater()
+            self.best_seller_widget = None
             best_seller_data = self.db.get_best_seller(self.date_range_days)
             self.best_seller_widget = BestSellerWidget(best_seller_data)
             self.stats_layout.addWidget(self.best_seller_widget)
@@ -531,6 +562,7 @@ class InventoryDashboard(QWidget):
 
         if self.best_seller_widget:
             self.best_seller_widget.deleteLater()
+            self.best_seller_widget = None
         best_seller_data = self.db.get_best_seller(self.date_range_days)
         self.best_seller_widget = BestSellerWidget(best_seller_data, saleability_increase)
         self.best_seller_widget.setMinimumWidth(200)

@@ -1,34 +1,108 @@
+"""
+Unified Inventory Database Module
+Supports both SQLite (local) and PostgreSQL (remote server)
+Automatically selects based on configuration
+
+Configuration:
+    USE_LOCAL_SQLITE = True  → Uses local inventory.db
+    USE_LOCAL_SQLITE = False → Uses remote PostgreSQL server
+
+Usage:
+    from database import InventoryDatabase
+    db = InventoryDatabase()
+    items = db.get_all_items()
+"""
+
 import sqlite3
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
-import hashlib
+from contextlib import contextmanager
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION - Customize Here
+# ═══════════════════════════════════════════════════════════════════════════════
+
+USE_LOCAL_SQLITE = True  # Set to False for PostgreSQL
+
+# PostgreSQL Configuration (used when USE_LOCAL_SQLITE = False)
+DB_CONFIG = {
+    'host': 'localhost',          # Change to server IP (e.g., '192.168.1.100')
+    'port': 5432,
+    'database': 'inventory_db',
+    'user': 'inventory_user',
+    'password': 'your_secure_password_here',  # CHANGE THIS!
+}
+
+DEBUG_SQL = False  # Print SQL statements for debugging
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMMON INTERFACE
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class InventoryDatabase:
-    """Handles all database operations for the inventory management system."""
+    """
+    Smart database wrapper that auto-selects SQLite or PostgreSQL.
+    All methods have identical signatures and return types.
+    """
+
+    def __new__(cls, db_path="inventory.db"):
+        """Factory method - returns appropriate database implementation."""
+        if USE_LOCAL_SQLITE:
+            return SQLiteDatabase(db_path)
+        else:
+            try:
+                return PostgreSQLDatabase()
+            except ImportError:
+                print("[WARNING] psycopg2 not found. Install with: pip install psycopg2")
+                print("[FALLBACK] Using SQLite instead...")
+                return SQLiteDatabase(db_path)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SQLITE IMPLEMENTATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SQLiteDatabase:
+    """SQLite-based database for local development."""
 
     def __init__(self, db_path="inventory.db"):
-        """Initialize database connection and create tables if needed."""
+        """Initialize SQLite database."""
         self.db_path = Path(db_path)
-        self.connection = None
+        self.db_type = "SQLite"
         self.init_db()
+        print(f"[DB] Using SQLite database: {self.db_path}")
 
+    def _get_conn(self):
+        """Open a fresh, independent connection per call.
+        This prevents the Flask thread and Qt thread from stomping
+        on each other's shared self.connection handle, which was the
+        root cause of false 'Insufficient stock' errors.
+        """
+        conn = sqlite3.connect(
+            str(self.db_path),
+            timeout=15,
+            check_same_thread=False,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=15000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        return conn
+
+    # Thin aliases kept for backward compatibility.
     def connect(self):
-        """Create and return database connection."""
-        self.connection = sqlite3.connect(str(self.db_path))
-        self.connection.row_factory = sqlite3.Row
-        return self.connection
+        return self._get_conn()
 
     def disconnect(self):
-        """Close database connection."""
-        if self.connection:
-            self.connection.close()
+        pass  # no-op: each method now closes its own local connection
 
     def init_db(self):
         """Create all necessary tables."""
-        conn = self.connect()
+        conn = self._get_conn()
         cursor = conn.cursor()
 
-        # Users table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +114,6 @@ class InventoryDatabase:
             )
         """)
 
-        # Categories table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +123,6 @@ class InventoryDatabase:
             )
         """)
 
-        # Items/Products table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +140,6 @@ class InventoryDatabase:
             )
         """)
 
-        # Inventory movements/transactions
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inventory_movements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +156,6 @@ class InventoryDatabase:
             )
         """)
 
-        # Sales table (for tracking sold items)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sales (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,39 +170,38 @@ class InventoryDatabase:
         """)
 
         conn.commit()
-        self.disconnect()
+        conn.close()
 
-    # USER OPERATIONS
+    # ── USER OPERATIONS ──────────────────────────────────────────────────────
+
     def add_user(self, username, password, email=None):
-        """Add a new user to the database."""
-        conn = self.connect()
+        """Add a new user."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-        password_hash = self._hash_password(password)
-
         try:
             cursor.execute("""
                 INSERT INTO users (username, password_hash, email)
                 VALUES (?, ?, ?)
-            """, (username, password_hash, email))
+            """, (username, self._hash_password(password), email))
             conn.commit()
             user_id = cursor.lastrowid
-            self.disconnect()
+            conn.close()
             return user_id
         except sqlite3.IntegrityError:
-            self.disconnect()
+            conn.close()
             return None
 
     def get_user_by_username(self, username):
-        """Retrieve user by username."""
-        conn = self.connect()
+        """Get user by username."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
-        self.disconnect()
+        conn.close()
         return user
 
     def verify_password(self, stored_hash, password):
-        """Verify if provided password matches stored hash."""
+        """Verify password."""
         return stored_hash == self._hash_password(password)
 
     @staticmethod
@@ -140,10 +209,11 @@ class InventoryDatabase:
         """Hash password using SHA-256."""
         return hashlib.sha256(password.encode()).hexdigest()
 
-    # CATEGORY OPERATIONS
+    # ── CATEGORY OPERATIONS ──────────────────────────────────────────────────
+
     def add_category(self, name, description=None):
-        """Add a new category."""
-        conn = self.connect()
+        """Add a category."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         try:
             cursor.execute("""
@@ -152,26 +222,27 @@ class InventoryDatabase:
             """, (name, description))
             conn.commit()
             category_id = cursor.lastrowid
-            self.disconnect()
+            conn.close()
             return category_id
         except sqlite3.IntegrityError:
-            self.disconnect()
+            conn.close()
             return None
 
     def get_all_categories(self):
         """Get all categories."""
-        conn = self.connect()
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM categories ORDER BY name")
         categories = cursor.fetchall()
-        self.disconnect()
+        conn.close()
         return categories
 
-    # ITEM OPERATIONS
+    # ── ITEM OPERATIONS ──────────────────────────────────────────────────────
+
     def add_item(self, name, price, category_id=None, sku=None, description=None,
                  quantity=0, low_stock_threshold=10, image_path=None):
-        """Add a new item to inventory."""
-        conn = self.connect()
+        """Add an item."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         try:
             cursor.execute("""
@@ -182,24 +253,24 @@ class InventoryDatabase:
                   low_stock_threshold, image_path))
             conn.commit()
             item_id = cursor.lastrowid
-            self.disconnect()
+            conn.close()
             return item_id
         except sqlite3.IntegrityError:
-            self.disconnect()
+            conn.close()
             return None
 
     def get_item(self, item_id):
         """Get item by ID."""
-        conn = self.connect()
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,))
         item = cursor.fetchone()
-        self.disconnect()
+        conn.close()
         return item
 
     def get_all_items(self):
-        """Get all items with category names."""
-        conn = self.connect()
+        """Get all items."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT i.*, c.name as category_name
@@ -208,12 +279,12 @@ class InventoryDatabase:
             ORDER BY i.name
         """)
         items = cursor.fetchall()
-        self.disconnect()
+        conn.close()
         return items
 
     def search_items(self, search_term):
-        """Search items by name or SKU."""
-        conn = self.connect()
+        """Search items."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         search_pattern = f"%{search_term}%"
         cursor.execute("""
@@ -224,77 +295,65 @@ class InventoryDatabase:
             ORDER BY i.name
         """, (search_pattern, search_pattern))
         items = cursor.fetchall()
-        self.disconnect()
+        conn.close()
         return items
 
     def update_item(self, item_id, **kwargs):
-        """Update item details."""
-        conn = self.connect()
+        """Update item."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-
         allowed_fields = {'name', 'price', 'description', 'category_id',
                          'low_stock_threshold', 'image_path'}
         fields = {k: v for k, v in kwargs.items() if k in allowed_fields}
-
         if not fields:
-            self.disconnect()
+            conn.close()
             return False
-
         fields['updated_at'] = datetime.now().isoformat()
-
         set_clause = ", ".join([f"{k} = ?" for k in fields.keys()])
         values = list(fields.values()) + [item_id]
-
         cursor.execute(f"UPDATE items SET {set_clause} WHERE id = ?", values)
         conn.commit()
-        self.disconnect()
+        conn.close()
         return cursor.rowcount > 0
 
     def delete_item(self, item_id):
-        """Delete an item."""
-        conn = self.connect()
+        """Delete item."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM items WHERE id = ?", (item_id,))
         conn.commit()
-        self.disconnect()
+        conn.close()
         return cursor.rowcount > 0
 
-    # INVENTORY OPERATIONS
-    def update_quantity(self, item_id, new_quantity, movement_type, user_id=None, notes=None):
-        """Update item quantity and record movement."""
-        conn = self.connect()
-        cursor = conn.cursor()
+    # ── INVENTORY OPERATIONS ─────────────────────────────────────────────────
 
-        # Get current quantity
+    def update_quantity(self, item_id, new_quantity, movement_type, user_id=None, notes=None):
+        """Update quantity."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
         cursor.execute("SELECT quantity FROM items WHERE id = ?", (item_id,))
         result = cursor.fetchone()
         if not result:
-            self.disconnect()
+            conn.close()
             return False
-
         previous_quantity = result[0]
-
-        # Update quantity
         cursor.execute("""
             UPDATE items SET quantity = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (new_quantity, item_id))
-
-        # Record movement
         cursor.execute("""
             INSERT INTO inventory_movements
             (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (item_id, movement_type, abs(new_quantity - previous_quantity),
               previous_quantity, new_quantity, notes, user_id))
-
         conn.commit()
-        self.disconnect()
+        conn.close()
         return True
 
     def get_low_stock_items(self):
-        """Get items below low stock threshold."""
-        conn = self.connect()
+        """Get low stock items."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT i.*, c.name as category_name
@@ -304,14 +363,13 @@ class InventoryDatabase:
             ORDER BY i.quantity ASC
         """)
         items = cursor.fetchall()
-        self.disconnect()
+        conn.close()
         return items
 
     def get_inventory_movements(self, item_id=None, limit=100):
-        """Get inventory movement history."""
-        conn = self.connect()
+        """Get inventory movements."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-
         if item_id:
             cursor.execute("""
                 SELECT im.*, i.name as item_name, u.username
@@ -331,52 +389,55 @@ class InventoryDatabase:
                 ORDER BY im.created_at DESC
                 LIMIT ?
             """, (limit,))
-
         movements = cursor.fetchall()
-        self.disconnect()
+        conn.close()
         return movements
 
-    # SALES OPERATIONS
+    # ── SALES OPERATIONS ─────────────────────────────────────────────────────
+
     def record_sale(self, item_id, quantity_sold, user_id=None, sale_price=None):
-        """Record a sale and update inventory."""
-        conn = self.connect()
+        """Record a sale."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-
-        # Get current quantity
-        cursor.execute("SELECT quantity, price FROM items WHERE id = ?", (item_id,))
-        result = cursor.fetchone()
-        if not result:
-            self.disconnect()
+        try:
+            cursor.execute("SELECT quantity, price FROM items WHERE id = ?", (item_id,))
+            result = cursor.fetchone()
+            if not result:
+                conn.close()
+                return False
+            current_quantity, default_price = result
+            sale_price = sale_price or default_price
+            if current_quantity < quantity_sold:
+                conn.close()
+                return False
+            new_quantity = current_quantity - quantity_sold
+            cursor.execute("""
+                INSERT INTO sales (item_id, quantity_sold, sale_price, user_id)
+                VALUES (?, ?, ?, ?)
+            """, (item_id, quantity_sold, sale_price, user_id))
+            cursor.execute("""
+                UPDATE items SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (new_quantity, item_id))
+            cursor.execute("""
+                INSERT INTO inventory_movements
+                (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, ("SALE", quantity_sold, current_quantity, new_quantity, 
+                  f"Sold {quantity_sold} units at Php {sale_price}", user_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[ERROR] record_sale failed: {e}")
+            conn.rollback()
             return False
-
-        current_quantity, default_price = result
-        sale_price = sale_price or default_price
-
-        if current_quantity < quantity_sold:
-            self.disconnect()
-            return False
-
-        new_quantity = current_quantity - quantity_sold
-
-        # Record sale
-        cursor.execute("""
-            INSERT INTO sales (item_id, quantity_sold, sale_price, user_id)
-            VALUES (?, ?, ?, ?)
-        """, (item_id, quantity_sold, sale_price, user_id))
-
-        # Update inventory via update_quantity
-        self.update_quantity(item_id, new_quantity, "SALE", user_id,
-                           f"Sold {quantity_sold} units at Php {sale_price}")
-
-        conn.commit()
-        self.disconnect()
-        return True
+        finally:
+            conn.close()
 
     def get_sales_history(self, item_id=None, limit=100):
         """Get sales history."""
-        conn = self.connect()
+        conn = self._get_conn()
         cursor = conn.cursor()
-
         if item_id:
             cursor.execute("""
                 SELECT s.*, i.name as item_name, u.username
@@ -396,176 +457,569 @@ class InventoryDatabase:
                 ORDER BY s.sale_date DESC
                 LIMIT ?
             """, (limit,))
-
         sales = cursor.fetchall()
-        self.disconnect()
+        conn.close()
         return sales
 
     def get_item_count_trend(self, days=7):
-        """Calculate item count increase/decrease percentage."""
-        conn = self.connect()
+        """Get item count trend."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         previous_cutoff = (datetime.now() - timedelta(days=days*2)).isoformat()
         previous_end = (datetime.now() - timedelta(days=days)).isoformat()
-
-        # Current period: items created
-        cursor.execute("""
-            SELECT COUNT(*) FROM items WHERE created_at >= ?
-        """, (cutoff_date,))
+        cursor.execute("SELECT COUNT(*) FROM items WHERE created_at >= ?", (cutoff_date,))
         current_items = cursor.fetchone()[0]
-
-        # Previous period: items created
         cursor.execute("""
             SELECT COUNT(*) FROM items WHERE created_at >= ? AND created_at < ?
         """, (previous_cutoff, previous_end))
         previous_items = cursor.fetchone()[0]
-
         if previous_items == 0:
             trend = 0 if current_items == 0 else 100
         else:
             trend = ((current_items - previous_items) / previous_items) * 100
-
-        self.disconnect()
+        conn.close()
         return trend
 
     def get_low_stock_status(self):
-        """Get low stock count and average threshold."""
-        conn = self.connect()
+        """Get low stock status."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT COUNT(*) FROM items WHERE quantity <= low_stock_threshold
-        """)
+        cursor.execute("SELECT COUNT(*) FROM items WHERE quantity <= low_stock_threshold")
         low_stock_count = cursor.fetchone()[0]
-
-        cursor.execute("""
-            SELECT AVG(low_stock_threshold) FROM items
-        """)
+        cursor.execute("SELECT AVG(low_stock_threshold) FROM items")
         avg_threshold = cursor.fetchone()[0] or 10
-
-        self.disconnect()
+        conn.close()
         return low_stock_count, avg_threshold
 
     def get_sales_trend(self, days=7):
-        """Calculate sales increase/decrease percentage."""
-        conn = self.connect()
+        """Get sales trend."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         previous_cutoff = (datetime.now() - timedelta(days=days*2)).isoformat()
         previous_end = (datetime.now() - timedelta(days=days)).isoformat()
-
-        # Current period sales
         cursor.execute("""
             SELECT COALESCE(SUM(quantity_sold), 0) FROM sales WHERE sale_date >= ?
         """, (cutoff_date,))
         current_sales = cursor.fetchone()[0]
-
-        # Previous period sales
         cursor.execute("""
             SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
             WHERE sale_date >= ? AND sale_date < ?
         """, (previous_cutoff, previous_end))
         previous_sales = cursor.fetchone()[0]
-
         if previous_sales == 0:
             trend = 0 if current_sales == 0 else 100
         else:
             trend = ((current_sales - previous_sales) / previous_sales) * 100
-
-        self.disconnect()
+        conn.close()
         return trend
 
     def get_best_seller(self, days=7):
-        """Get the best selling item in the last N days."""
-        conn = self.connect()
+        """Get best selling item."""
+        conn = self._get_conn()
         cursor = conn.cursor()
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
-
         cursor.execute("""
             SELECT i.id, i.name, i.price, i.quantity, i.image_path,
-                   COALESCE(SUM(s.quantity_sold), 0) as total_sold
-            FROM items i
-            LEFT JOIN sales s ON i.id = s.item_id AND s.sale_date >= ?
-            GROUP BY i.id
+                   SUM(s.quantity_sold) as total_sold
+            FROM sales s
+            JOIN items i ON s.item_id = i.id
+            WHERE s.sale_date >= ?
+            GROUP BY i.id, i.name, i.price, i.quantity, i.image_path
             ORDER BY total_sold DESC
             LIMIT 1
         """, (cutoff_date,))
-
         result = cursor.fetchone()
-        self.disconnect()
+        conn.close()
         return result
 
-    def get_saleability_increase(self, days=7):
-        """Calculate saleability increase compared to previous period."""
-        conn = self.connect()
+    def get_dashboard_stats(self):
+        """Get dashboard statistics."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-        now = datetime.now()
-        current_start = (now - timedelta(days=days)).isoformat()
-        previous_start = (now - timedelta(days=days*2)).isoformat()
-        previous_end = (now - timedelta(days=days)).isoformat()
+        
+        # Get total items
+        cursor.execute("SELECT COUNT(*) FROM items")
+        total_items = cursor.fetchone()[0]
+        
+        # Get low stock items
+        cursor.execute("SELECT COUNT(*) FROM items WHERE quantity <= low_stock_threshold")
+        low_stock_items = cursor.fetchone()[0]
+        
+        # Get units sold today
+        today = datetime.now().date().isoformat()
+        cursor.execute("""
+            SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+            WHERE DATE(sale_date) = ?
+        """, (today,))
+        units_sold_today = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COALESCE(SUM(quantity), 0) FROM items")
+        total_quantity = cursor.fetchone()[0]
+        conn.close()
+        return {
+            'total_items': total_items,
+            'low_stock_items': low_stock_items,
+            'units_sold_today': units_sold_today,
+            'total_quantity': total_quantity,
+        }
 
-        # Current period sales
+    def get_saleability_increase(self, days=7):
+        """Get saleability increase trend for best seller."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        previous_cutoff = (datetime.now() - timedelta(days=days*2)).isoformat()
+        previous_end = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        # Get current period sales
         cursor.execute("""
             SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
             WHERE sale_date >= ?
-        """, (current_start,))
+        """, (cutoff_date,))
         current_sales = cursor.fetchone()[0]
-
-        # Previous period sales
+        
+        # Get previous period sales
         cursor.execute("""
             SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
             WHERE sale_date >= ? AND sale_date < ?
-        """, (previous_start, previous_end))
+        """, (previous_cutoff, previous_end))
         previous_sales = cursor.fetchone()[0]
-
+        
+        # Calculate trend
         if previous_sales == 0:
-            increase_percent = 0 if current_sales == 0 else 100
+            trend = 0 if current_sales == 0 else 100
         else:
-            increase_percent = ((current_sales - previous_sales) / previous_sales) * 100
+            trend = ((current_sales - previous_sales) / previous_sales) * 100
+        
+        conn.close()
+        return trend
 
-        self.disconnect()
-        return increase_percent
 
-    # DASHBOARD STATISTICS
-    def get_dashboard_stats(self):
-        """Get statistics for dashboard."""
-        conn = self.connect()
+
+    def get_items_added_per_day(self, days=7):
+        """Get count of items added per day for the given period."""
+        conn = self._get_conn()
         cursor = conn.cursor()
-
-        stats = {}
-
-        # Total items count
-        cursor.execute("SELECT COUNT(*) FROM items")
-        stats['total_items'] = cursor.fetchone()[0]
-
-        # Low stock items count
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         cursor.execute("""
-            SELECT COUNT(*) FROM items
-            WHERE quantity <= low_stock_threshold
-        """)
-        stats['low_stock_items'] = cursor.fetchone()[0]
+            SELECT DATE(created_at) as day, COUNT(*) as count
+            FROM items
+            WHERE created_at >= ?
+            GROUP BY DATE(created_at)
+            ORDER BY day
+        """, (cutoff_date,))
+        result = cursor.fetchall()
+        conn.close()
+        return result
 
-        # Total inventory value
-        cursor.execute("""
-            SELECT SUM(price * quantity) FROM items
-        """)
-        result = cursor.fetchone()[0]
-        stats['total_inventory_value'] = result or 0.0
 
-        # Total quantity
-        cursor.execute("SELECT SUM(quantity) FROM items")
-        result = cursor.fetchone()[0]
-        stats['total_quantity'] = result or 0
+# ═══════════════════════════════════════════════════════════════════════════════
+# POSTGRESQL IMPLEMENTATION
+# ═══════════════════════════════════════════════════════════════════════════════
 
-        # Today's sales
-        cursor.execute("""
-            SELECT COUNT(*), COALESCE(SUM(quantity_sold), 0) FROM sales
-            WHERE DATE(sale_date) = DATE('now')
-        """)
-        sales_today = cursor.fetchone()
-        stats['sales_today_count'] = sales_today[0] or 0
-        stats['units_sold_today'] = sales_today[1] or 0
+class PostgreSQLDatabase:
+    """PostgreSQL-based database for remote server access."""
 
-        self.disconnect()
-        return stats
+    def __init__(self):
+        """Initialize PostgreSQL database."""
+        import psycopg2
+        from psycopg2 import pool, extras
+        self.psycopg2 = psycopg2
+        self.extras = extras
+        self.db_type = "PostgreSQL"
+        
+        try:
+            self.connection_pool = psycopg2.pool.SimpleConnectionPool(
+                minconn=1, maxconn=10,
+                host=DB_CONFIG['host'],
+                port=DB_CONFIG['port'],
+                database=DB_CONFIG['database'],
+                user=DB_CONFIG['user'],
+                password=DB_CONFIG['password'],
+            )
+            self.init_db()
+            print(f"[DB] Connected to PostgreSQL at {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+        except psycopg2.Error as e:
+            print(f"[ERROR] Failed to connect to PostgreSQL: {e}")
+            raise
+
+    @contextmanager
+    def get_connection(self):
+        """Get a connection from pool."""
+        conn = self.connection_pool.getconn()
+        try:
+            yield conn
+        finally:
+            self.connection_pool.putconn(conn)
+
+    def init_db(self):
+        """Create all necessary tables."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL, email TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE)
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS categories (
+                    id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+                    description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS items (
+                    id SERIAL PRIMARY KEY, name TEXT NOT NULL, sku TEXT UNIQUE,
+                    category_id INTEGER REFERENCES categories(id),
+                    description TEXT, price REAL NOT NULL, quantity INTEGER DEFAULT 0,
+                    low_stock_threshold INTEGER DEFAULT 10, image_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS inventory_movements (
+                    id SERIAL PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES items(id),
+                    movement_type TEXT NOT NULL, quantity INTEGER NOT NULL,
+                    previous_quantity INTEGER, new_quantity INTEGER, notes TEXT,
+                    user_id INTEGER REFERENCES users(id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sales (
+                    id SERIAL PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES items(id),
+                    quantity_sold INTEGER NOT NULL, sale_price REAL,
+                    sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    user_id INTEGER REFERENCES users(id))
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_category ON items(category_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_item ON sales(item_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_movements_item ON inventory_movements(item_id)")
+            conn.commit()
+
+    def add_user(self, username, password, email=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""INSERT INTO users (username, password_hash, email)
+                    VALUES (%s, %s, %s) RETURNING id""",
+                    (username, self._hash_password(password), email))
+                user_id = cursor.fetchone()[0]
+                conn.commit()
+                return user_id
+            except self.psycopg2.IntegrityError:
+                conn.rollback()
+                return None
+
+    def get_user_by_username(self, username):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+            return cursor.fetchone()
+
+    def verify_password(self, stored_hash, password):
+        return stored_hash == self._hash_password(password)
+
+    @staticmethod
+    def _hash_password(password):
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def add_category(self, name, description=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""INSERT INTO categories (name, description)
+                    VALUES (%s, %s) RETURNING id""", (name, description))
+                category_id = cursor.fetchone()[0]
+                conn.commit()
+                return category_id
+            except self.psycopg2.IntegrityError:
+                conn.rollback()
+                return None
+
+    def get_all_categories(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            cursor.execute("SELECT * FROM categories ORDER BY name")
+            return cursor.fetchall()
+
+    def add_item(self, name, price, category_id=None, sku=None, description=None,
+                 quantity=0, low_stock_threshold=10, image_path=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""INSERT INTO items (name, sku, category_id, description, price,
+                    quantity, low_stock_threshold, image_path)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                    (name, sku, category_id, description, price, quantity,
+                     low_stock_threshold, image_path))
+                item_id = cursor.fetchone()[0]
+                conn.commit()
+                return item_id
+            except self.psycopg2.IntegrityError:
+                conn.rollback()
+                return None
+
+    def get_item(self, item_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            cursor.execute("SELECT * FROM items WHERE id = %s", (item_id,))
+            return cursor.fetchone()
+
+    def get_all_items(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            cursor.execute("""SELECT i.*, c.name as category_name FROM items i
+                LEFT JOIN categories c ON i.category_id = c.id ORDER BY i.name""")
+            return cursor.fetchall()
+
+    def search_items(self, search_term):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            search_pattern = f"%{search_term}%"
+            cursor.execute("""SELECT i.*, c.name as category_name FROM items i
+                LEFT JOIN categories c ON i.category_id = c.id
+                WHERE i.name ILIKE %s OR i.sku ILIKE %s ORDER BY i.name""",
+                (search_pattern, search_pattern))
+            return cursor.fetchall()
+
+    def update_item(self, item_id, **kwargs):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            allowed_fields = {'name', 'price', 'description', 'category_id',
+                            'low_stock_threshold', 'image_path'}
+            fields = {k: v for k, v in kwargs.items() if k in allowed_fields}
+            if not fields:
+                return False
+            fields['updated_at'] = datetime.now()
+            set_clause = ", ".join([f"{k} = %s" for k in fields.keys()])
+            values = list(fields.values()) + [item_id]
+            cursor.execute(f"UPDATE items SET {set_clause} WHERE id = %s", values)
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_item(self, item_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM items WHERE id = %s", (item_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def update_quantity(self, item_id, new_quantity, movement_type, user_id=None, notes=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT quantity FROM items WHERE id = %s", (item_id,))
+            result = cursor.fetchone()
+            if not result:
+                return False
+            previous_quantity = result[0]
+            cursor.execute("""UPDATE items SET quantity = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s""", (new_quantity, item_id))
+            cursor.execute("""INSERT INTO inventory_movements
+                (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (item_id, movement_type, abs(new_quantity - previous_quantity),
+                 previous_quantity, new_quantity, notes, user_id))
+            conn.commit()
+            return True
+
+    def get_low_stock_items(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            cursor.execute("""SELECT i.*, c.name as category_name FROM items i
+                LEFT JOIN categories c ON i.category_id = c.id
+                WHERE i.quantity <= i.low_stock_threshold ORDER BY i.quantity ASC""")
+            return cursor.fetchall()
+
+    def get_inventory_movements(self, item_id=None, limit=100):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            if item_id:
+                cursor.execute("""SELECT im.*, i.name as item_name, u.username
+                    FROM inventory_movements im JOIN items i ON im.item_id = i.id
+                    LEFT JOIN users u ON im.user_id = u.id
+                    WHERE im.item_id = %s ORDER BY im.created_at DESC LIMIT %s""",
+                    (item_id, limit))
+            else:
+                cursor.execute("""SELECT im.*, i.name as item_name, u.username
+                    FROM inventory_movements im JOIN items i ON im.item_id = i.id
+                    LEFT JOIN users u ON im.user_id = u.id
+                    ORDER BY im.created_at DESC LIMIT %s""", (limit,))
+            return cursor.fetchall()
+
+    def record_sale(self, item_id, quantity_sold, user_id=None, sale_price=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT quantity, price FROM items WHERE id = %s FOR UPDATE", (item_id,))
+                result = cursor.fetchone()
+                if not result:
+                    conn.rollback()
+                    return False
+                current_quantity, default_price = result
+                sale_price = sale_price or default_price
+                if current_quantity < quantity_sold:
+                    conn.rollback()
+                    return False
+                new_quantity = current_quantity - quantity_sold
+                cursor.execute("""INSERT INTO sales (item_id, quantity_sold, sale_price, user_id)
+                    VALUES (%s, %s, %s, %s)""", (item_id, quantity_sold, sale_price, user_id))
+                cursor.execute("""UPDATE items SET quantity = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s""", (new_quantity, item_id))
+                cursor.execute("""INSERT INTO inventory_movements
+                    (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (item_id, "SALE", quantity_sold, current_quantity, new_quantity,
+                     f"Sold {quantity_sold} units at Php {sale_price}", user_id))
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"[ERROR] record_sale failed: {e}")
+                conn.rollback()
+                return False
+
+    def get_sales_history(self, item_id=None, limit=100):
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=self.extras.RealDictCursor)
+            if item_id:
+                cursor.execute("""SELECT s.*, i.name as item_name, u.username FROM sales s
+                    JOIN items i ON s.item_id = i.id LEFT JOIN users u ON s.user_id = u.id
+                    WHERE s.item_id = %s ORDER BY s.sale_date DESC LIMIT %s""",
+                    (item_id, limit))
+            else:
+                cursor.execute("""SELECT s.*, i.name as item_name, u.username FROM sales s
+                    JOIN items i ON s.item_id = i.id LEFT JOIN users u ON s.user_id = u.id
+                    ORDER BY s.sale_date DESC LIMIT %s""", (limit,))
+            return cursor.fetchall()
+
+    def get_item_count_trend(self, days=7):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_date = datetime.now() - timedelta(days=days)
+            previous_cutoff = datetime.now() - timedelta(days=days*2)
+            previous_end = datetime.now() - timedelta(days=days)
+            cursor.execute("SELECT COUNT(*) FROM items WHERE created_at >= %s", (cutoff_date,))
+            current_items = cursor.fetchone()[0]
+            cursor.execute("""SELECT COUNT(*) FROM items WHERE created_at >= %s AND created_at < %s""",
+                (previous_cutoff, previous_end))
+            previous_items = cursor.fetchone()[0]
+            if previous_items == 0:
+                trend = 0 if current_items == 0 else 100
+            else:
+                trend = ((current_items - previous_items) / previous_items) * 100
+            return trend
+
+    def get_low_stock_status(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM items WHERE quantity <= low_stock_threshold")
+            low_stock_count = cursor.fetchone()[0]
+            cursor.execute("SELECT AVG(low_stock_threshold) FROM items")
+            avg_threshold = cursor.fetchone()[0] or 10
+            return low_stock_count, avg_threshold
+
+    def get_sales_trend(self, days=7):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_date = datetime.now() - timedelta(days=days)
+            previous_cutoff = datetime.now() - timedelta(days=days*2)
+            previous_end = datetime.now() - timedelta(days=days)
+            cursor.execute("""SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+                WHERE sale_date >= %s""", (cutoff_date,))
+            current_sales = cursor.fetchone()[0]
+            cursor.execute("""SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+                WHERE sale_date >= %s AND sale_date < %s""", (previous_cutoff, previous_end))
+            previous_sales = cursor.fetchone()[0]
+            if previous_sales == 0:
+                trend = 0 if current_sales == 0 else 100
+            else:
+                trend = ((current_sales - previous_sales) / previous_sales) * 100
+            return trend
+
+    def get_best_seller(self, days=7):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_date = datetime.now() - timedelta(days=days)
+            cursor.execute("""SELECT i.id, i.name, i.price, i.quantity, i.image_path,
+                SUM(s.quantity_sold) as total_sold
+                FROM sales s JOIN items i ON s.item_id = i.id
+                WHERE s.sale_date >= %s
+                GROUP BY i.id, i.name, i.price, i.quantity, i.image_path
+                ORDER BY total_sold DESC LIMIT 1""", (cutoff_date,))
+            return cursor.fetchone()
+
+    def get_dashboard_stats(self):
+        """Get dashboard statistics."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get total items
+            cursor.execute("SELECT COUNT(*) FROM items")
+            total_items = cursor.fetchone()[0]
+            
+            # Get low stock items
+            cursor.execute("SELECT COUNT(*) FROM items WHERE quantity <= low_stock_threshold")
+            low_stock_items = cursor.fetchone()[0]
+            
+            # Get units sold today
+            cursor.execute("""
+                SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+                WHERE DATE(sale_date) = CURRENT_DATE
+            """)
+            units_sold_today = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COALESCE(SUM(quantity), 0) FROM items")
+            total_quantity = cursor.fetchone()[0]
+            return {
+                'total_items': total_items,
+                'low_stock_items': low_stock_items,
+                'units_sold_today': units_sold_today,
+                'total_quantity': total_quantity,
+            }
+
+    def get_saleability_increase(self, days=7):
+        """Get saleability increase trend for best seller."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_date = datetime.now() - timedelta(days=days)
+            previous_cutoff = datetime.now() - timedelta(days=days*2)
+            previous_end = datetime.now() - timedelta(days=days)
+            
+            # Get current period sales
+            cursor.execute("""
+                SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+                WHERE sale_date >= %s
+            """, (cutoff_date,))
+            current_sales = cursor.fetchone()[0]
+            
+            # Get previous period sales
+            cursor.execute("""
+                SELECT COALESCE(SUM(quantity_sold), 0) FROM sales
+                WHERE sale_date >= %s AND sale_date < %s
+            """, (previous_cutoff, previous_end))
+            previous_sales = cursor.fetchone()[0]
+            
+            # Calculate trend
+            if previous_sales == 0:
+                trend = 0 if current_sales == 0 else 100
+            else:
+                trend = ((current_sales - previous_sales) / previous_sales) * 100
+            
+            return trend
+
+    def get_items_added_per_day(self, days=7):
+        """Get count of items added per day for the given period."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_date = datetime.now() - timedelta(days=days)
+            cursor.execute("""
+                SELECT DATE(created_at) as day, COUNT(*) as count
+                FROM items
+                WHERE created_at >= %s
+                GROUP BY DATE(created_at)
+                ORDER BY day
+            """, (cutoff_date,))
+            return cursor.fetchall()
