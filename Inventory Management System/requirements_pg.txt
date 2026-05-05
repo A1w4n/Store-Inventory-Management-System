@@ -1,0 +1,10 @@
+# Python dependencies for PostgreSQL support
+
+# Core dependencies (already in use)
+PySide6>=6.0.0
+Flask>=2.0.0
+
+# PostgreSQL support
+psycopg2-binary>=2.9.0  # Use this if psycopg2 compilation fails
+# or
+psycopg2>=2.9.0  # Use this if you have PostgreSQL dev libraries installed

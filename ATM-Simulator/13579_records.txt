@@ -1,0 +1,4 @@
+[03-13-2026 03:30:53] Action: Withdraw, Amount: Php 10, New Balance: Php 754.0
+[03-13-2026 03:30:55] Action: Withdraw, Amount: Php 10, New Balance: Php 754.0
+[03-13-2026 03:56:34] Action: Withdraw, Amount: Php 105, New Balance: Php 631.0
+[03-13-2026 03:57:09] Action: Deposit, Amount: Php 10, New Balance: Php 641.0
