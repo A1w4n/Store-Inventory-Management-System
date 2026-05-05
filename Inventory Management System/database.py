@@ -18,6 +18,10 @@ import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION - Customize Here
@@ -25,16 +29,29 @@ from contextlib import contextmanager
 
 USE_LOCAL_SQLITE = False  # Set to False for PostgreSQL
 
-# PostgreSQL Configuration (used when USE_LOCAL_SQLITE = False)
-DB_CONFIG = {
-    "host": "localhost",          # Change to server IP (e.g., '192.168.1.100')
-    "port": 5432,
-    "database": "inventory",
-    "user": "inventory_user",
-    "password": "admin123",  # CHANGE THIS!
-}
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-DEBUG_SQL = False  # Print SQL statements for debugging
+if DATABASE_URL:
+    # Cloud mode — parse DATABASE_URL
+    import re
+    match = re.match(r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+?)(\?.*)?$", DATABASE_URL)
+    if match:
+        DB_CONFIG = {
+            "host":     match.group(3),
+            "port":     int(match.group(4)),
+            "database": match.group(5),
+            "user":     match.group(1),
+            "password": match.group(2),
+        }
+else:
+    # Local mode
+    DB_CONFIG = {
+        "host":     "localhost",
+        "port":     5432,
+        "database": "inventory",
+        "user":     "inventory_user",
+        "password": "admin123",
+    }  # Print SQL statements for debugging
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
