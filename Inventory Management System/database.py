@@ -32,9 +32,9 @@ USE_LOCAL_SQLITE = False  # Set to False for PostgreSQL
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL:
-    # Cloud mode — parse DATABASE_URL
+    # Cloud mode — parse DATABASE_URL from environment
     import re
-    match = re.match(r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+?)(\?.*)?$", DATABASE_URL)
+    match = re.match(r"postgresql://([^:]+):([^@]+)@([^:/]+)[:/](\d+)/([^?]+)", DATABASE_URL)
     if match:
         DB_CONFIG = {
             "host":     match.group(3),
@@ -43,16 +43,25 @@ if DATABASE_URL:
             "user":     match.group(1),
             "password": match.group(2),
         }
+    else:
+        DB_CONFIG = {
+            "host":     "localhost",
+            "port":     5432,
+            "database": "inventory",
+            "user":     "inventory_user",
+            "password": "admin123",
+        }
 else:
-    # Local mode
+    # Local mode — use hardcoded config
     DB_CONFIG = {
         "host":     "localhost",
         "port":     5432,
         "database": "inventory",
         "user":     "inventory_user",
         "password": "admin123",
-    }  # Print SQL statements for debugging
+    }
 
+DEBUG_SQL = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COMMON INTERFACE
@@ -959,10 +968,21 @@ class PostgreSQLDatabase:
             """)
             units_sold_today = cursor.fetchone()[0]
             
+            # Get total quantity in stock
+            cursor.execute("SELECT COALESCE(SUM(quantity), 0) FROM items")
+            total_quantity = cursor.fetchone()[0]
+            
+            # Get total inventory value
+            cursor.execute("SELECT COALESCE(SUM(quantity * price), 0) FROM items")
+            total_inventory_value = cursor.fetchone()[0]
+
             return {
-                'total_items': total_items,
-                'low_stock_items': low_stock_items,
-                'units_sold_today': units_sold_today
+                'total_items':            total_items,
+                'low_stock_items':        low_stock_items,
+                'low_stock_count':        low_stock_items,
+                'units_sold_today':       units_sold_today,
+                'total_quantity':         total_quantity,
+                'total_inventory_value':  total_inventory_value,
             }
 
     def get_saleability_increase(self, days=7):
@@ -994,3 +1014,32 @@ class PostgreSQLDatabase:
                 trend = ((current_sales - previous_sales) / previous_sales) * 100
             
             return trend
+        
+    def get_items_added_per_day(self, days=7):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_date = datetime.now() - timedelta(days=days)
+            cursor.execute("""
+                SELECT DATE(created_at) as date, COUNT(*) as count
+                FROM items
+                WHERE created_at >= %s
+                GROUP BY DATE(created_at)
+                ORDER BY date ASC
+            """, (cutoff_date,))
+            rows = cursor.fetchall()
+            result = {}
+            for row in rows:
+                result[str(row[0])] = row[1]
+            return result    
+
+    def connect(self):
+        """Return a raw psycopg2 connection (for compatibility with Analytics_UI)."""
+        import psycopg2
+        conn = psycopg2.connect(
+            host=DB_CONFIG['host'],
+            port=DB_CONFIG['port'],
+            database=DB_CONFIG['database'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+        )
+        return conn

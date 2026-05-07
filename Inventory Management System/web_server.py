@@ -134,6 +134,16 @@ def api_stats():
     db = get_db()
     return jsonify(db.get_dashboard_stats())
 
+def start_server(host="0.0.0.0", port=5000, db_path="inventory.db"):
+    """Start Flask server in a background thread."""
+    import threading
+    thread = threading.Thread(
+        target=lambda: app.run(host=host, port=port, debug=False, use_reloader=False),
+        daemon=True
+    )
+    thread.start()
+    print(f"[ProStock] Staff portal started on {host}:{port}")
+    return thread
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
