@@ -148,6 +148,5 @@ def start_server(host="0.0.0.0", port=5000, db_path="inventory.db"):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"[ProStock] Staff portal running on port {port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
