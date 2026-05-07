@@ -2,8 +2,4 @@ flask
 flask-cors
 psycopg2-binary
 python-dotenv
-<<<<<<< Updated upstream
 gunicorn
-=======
-gunicorn
->>>>>>> Stashed changes
