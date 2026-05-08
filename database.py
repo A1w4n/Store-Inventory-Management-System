@@ -33,16 +33,18 @@ USE_LOCAL_SQLITE = False  # Set to False for PostgreSQL
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL:
-    # Cloud mode — parse DATABASE_URL from environment
-    import re
-    match = re.match(r"postgresql://([^:]+):([^@]+)@([^:/]+)[:/](\d+)/([^?]+)", DATABASE_URL)
-    if match:
+    # Cloud mode — use DATABASE_URL directly
+    import psycopg2
+    try:
+        # Test if URL is valid by parsing it
+        DB_CONFIG = {"dsn": DATABASE_URL}
+    except Exception:
         DB_CONFIG = {
-            "host":     match.group(3),
-            "port":     int(match.group(4)),
-            "database": match.group(5),
-            "user":     match.group(1),
-            "password": match.group(2),
+            "host":     "localhost",
+            "port":     5432,
+            "database": "inventory",
+            "user":     "inventory_user",
+            "password": "admin123",
         }
     else:
         DB_CONFIG = {
@@ -638,16 +640,24 @@ class PostgreSQLDatabase:
         self.db_type = "PostgreSQL"
         
         try:
-            self.connection_pool = psycopg2.pool.SimpleConnectionPool(
-                minconn=1, maxconn=10,
-                host=DB_CONFIG['host'],
-                port=DB_CONFIG['port'],
-                database=DB_CONFIG['database'],
-                user=DB_CONFIG['user'],
-                password=DB_CONFIG['password'],
-            )
+            if "dsn" in DB_CONFIG:
+                # Cloud mode — connect using full URL
+                self.connection_pool = psycopg2.pool.SimpleConnectionPool(
+                    minconn=1, maxconn=10,
+                    dsn=DB_CONFIG['dsn']
+                )
+            else:
+                # Local mode — connect using individual params
+                self.connection_pool = psycopg2.pool.SimpleConnectionPool(
+                    minconn=1, maxconn=10,
+                    host=DB_CONFIG['host'],
+                    port=DB_CONFIG['port'],
+                    database=DB_CONFIG['database'],
+                    user=DB_CONFIG['user'],
+                    password=DB_CONFIG['password'],
+                )
             self.init_db()
-            print(f"[DB] Connected to PostgreSQL at {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+            print(f"[DB] Connected to PostgreSQL successfully")
         except psycopg2.Error as e:
             print(f"[ERROR] Failed to connect to PostgreSQL: {e}")
             raise
