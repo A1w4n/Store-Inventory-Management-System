@@ -37,7 +37,14 @@ def get_db():
 def health():
     try:
         db = get_db()
-        return jsonify({"status": "ok", "db": "connected"}), 200
+        items = db.get_all_items()
+        return jsonify({
+            "status": "ok",
+            "db": "connected",
+            "item_count": len(items),
+            "database_url_set": bool(os.environ.get("DATABASE_URL")),
+            "database_url_preview": os.environ.get("DATABASE_URL", "NOT SET")[:50]
+        }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
