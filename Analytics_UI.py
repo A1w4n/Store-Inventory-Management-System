@@ -447,7 +447,7 @@ class AnalyticsDB:
             FROM categories c
             JOIN items i ON i.category_id = c.id
             LEFT JOIN sales s ON s.item_id = i.id AND s.sale_date >= ?
-            GROUP BY c.id ORDER BY rev DESC
+            GROUP BY c.id, c.name ORDER BY rev DESC
         """, (cutoff,))
 
     def top_items_by_revenue(self, days, limit=10):
@@ -458,7 +458,8 @@ class AnalyticsDB:
                    COALESCE(SUM(s.quantity_sold*s.sale_price),0) as revenue
             FROM items i
             LEFT JOIN sales s ON s.item_id = i.id AND s.sale_date >= ?
-            GROUP BY i.id ORDER BY revenue DESC LIMIT ?
+            GROUP BY i.id, i.name, i.price, i.quantity
+            ORDER BY revenue DESC LIMIT ?
         """, (cutoff, limit))
 
     # ── Inventory health ─────────────────────────────────────
@@ -490,7 +491,7 @@ class AnalyticsDB:
             FROM items i
             LEFT JOIN categories c ON i.category_id = c.id
             LEFT JOIN sales s ON s.item_id = i.id AND s.sale_date >= ?
-            GROUP BY i.id
+            GROUP BY i.id, i.name, i.quantity, c.name, i.price
             HAVING (sold + stock) > 0
             ORDER BY (CAST(sold AS REAL)/(sold+stock)) DESC
         """, (cutoff,))
@@ -507,7 +508,7 @@ class AnalyticsDB:
             FROM items i
             LEFT JOIN sales s ON s.item_id = i.id AND s.sale_date >= ?
             WHERE i.quantity > 0
-            GROUP BY i.id
+            GROUP BY i.id, i.name, i.quantity, i.low_stock_threshold
         """, (cutoff,))
         result = []
         for r in rows:
