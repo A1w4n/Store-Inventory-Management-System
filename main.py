@@ -1,4 +1,3 @@
-import psycopg2
 from dotenv import load_dotenv
 import os
 
@@ -8,12 +7,17 @@ load_dotenv()
 # Fetch variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Connect to the database
-try:
-    connection = psycopg2.connect(DATABASE_URL)
-    print("Database connected successfully!")
-except Exception as e:
-    print(f"Error connecting to database: {e}")
+if DATABASE_URL:
+    try:
+        import psycopg2
+        connection = psycopg2.connect(DATABASE_URL)
+        print("Database connected successfully!")
+    except ImportError:
+        print("[WARNING] psycopg2 not installed, skipping PostgreSQL connectivity test.")
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+else:
+    print("[INFO] DATABASE_URL not set, skipping PostgreSQL connectivity test.")
 
 import sys
 from PySide6.QtWidgets import QApplication, QMessageBox

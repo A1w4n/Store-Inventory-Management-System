@@ -10,7 +10,8 @@ Configuration:
 Usage:
     from database import InventoryDatabase
     db = InventoryDatabase()
-    items = db.get_all_items()
+    items = d
+    b.get_all_items()
 """
 
 import sqlite3
@@ -80,8 +81,11 @@ class InventoryDatabase:
         else:
             try:
                 return PostgreSQLDatabase()
-            except ImportError:
-                print("[WARNING] psycopg2 not found. Install with: pip install psycopg2")
+            except Exception as e:
+                if isinstance(e, ImportError):
+                    print("[WARNING] psycopg2 not found. Install with: pip install psycopg2")
+                else:
+                    print(f"[WARNING] PostgreSQL unavailable: {e}")
                 print("[FALLBACK] Using SQLite instead...")
                 return SQLiteDatabase(db_path)
 
@@ -113,6 +117,10 @@ class SQLiteDatabase:
         self.connection.execute("PRAGMA busy_timeout=15000;")
         self.connection.execute("PRAGMA synchronous=NORMAL;")
         return self.connection
+
+    def get_connection(self):
+        """Return a SQLite connection suitable for use with a context manager."""
+        return self.connect()
 
     def disconnect(self):
         """Close database connection."""

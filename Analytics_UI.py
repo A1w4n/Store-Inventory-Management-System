@@ -392,21 +392,33 @@ class AnalyticsDB:
     def __init__(self, db: InventoryDatabase):
         self.db = db
 
-def _q(self, sql, params=()):
-    import psycopg2.extras
-    sql = sql.replace("?", "%s")  # convert SQLite to PostgreSQL placeholders
-    with self.db.get_connection() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cursor.execute(sql, params)
-        return cursor.fetchall()
+    def _q(self, sql, params=()):
+        if getattr(self.db, "db_type", "").lower() == "postgresql":
+            import psycopg2.extras
+            sql = sql.replace("?", "%s")  # convert SQLite to PostgreSQL placeholders
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cursor.execute(sql, params)
+                return cursor.fetchall()
 
-def _q1(self, sql, params=()):
-    import psycopg2.extras
-    sql = sql.replace("?", "%s")  # convert SQLite to PostgreSQL placeholders
-    with self.db.get_connection() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cursor.execute(sql, params)
-        return cursor.fetchone()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            return cursor.fetchall()
+
+    def _q1(self, sql, params=()):
+        if getattr(self.db, "db_type", "").lower() == "postgresql":
+            import psycopg2.extras
+            sql = sql.replace("?", "%s")  # convert SQLite to PostgreSQL placeholders
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cursor.execute(sql, params)
+                return cursor.fetchone()
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            return cursor.fetchone()
 
     # ── Revenue / sales ──────────────────────────────────────
 

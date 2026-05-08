@@ -24,15 +24,22 @@ def get_db():
     if _db_instance is None:
         with _db_lock:
             if _db_instance is None:
-                _db_instance = InventoryDatabase()  # reads DATABASE_URL from env
+                try:
+                    _db_instance = InventoryDatabase()
+                except Exception as e:
+                    print(f"[ERROR] Database connection failed: {e}")
+                    raise
     return _db_instance
-
 
 # ── Health check ──────────────────────────────────────────────────────────────
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"}), 200
+    try:
+        db = get_db()
+        return jsonify({"status": "ok", "db": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ── Static portal page ────────────────────────────────────────────────────────
@@ -150,5 +157,3 @@ def start_server(host="0.0.0.0", port=5000, db_path="inventory.db"):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
