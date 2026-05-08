@@ -33,29 +33,8 @@ USE_LOCAL_SQLITE = False  # Set to False for PostgreSQL
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL:
-    # Cloud mode — use DATABASE_URL directly
-    import psycopg2
-    try:
-        # Test if URL is valid by parsing it
-        DB_CONFIG = {"dsn": DATABASE_URL}
-    except Exception:
-        DB_CONFIG = {
-            "host":     "localhost",
-            "port":     5432,
-            "database": "inventory",
-            "user":     "inventory_user",
-            "password": "admin123",
-        }
-    else:
-        DB_CONFIG = {
-            "host":     "localhost",
-            "port":     5432,
-            "database": "inventory",
-            "user":     "inventory_user",
-            "password": "admin123",
-        }
+    DB_CONFIG = {"dsn": DATABASE_URL}
 else:
-    # Local mode — use hardcoded config
     DB_CONFIG = {
         "host":     "localhost",
         "port":     5432,
@@ -641,13 +620,12 @@ class PostgreSQLDatabase:
         
         try:
             if "dsn" in DB_CONFIG:
-                # Cloud mode — connect using full URL
                 self.connection_pool = psycopg2.pool.SimpleConnectionPool(
                     minconn=1, maxconn=10,
                     dsn=DB_CONFIG['dsn']
                 )
+                print(f"[DB] Connected to PostgreSQL via DATABASE_URL")
             else:
-                # Local mode — connect using individual params
                 self.connection_pool = psycopg2.pool.SimpleConnectionPool(
                     minconn=1, maxconn=10,
                     host=DB_CONFIG['host'],
@@ -656,8 +634,8 @@ class PostgreSQLDatabase:
                     user=DB_CONFIG['user'],
                     password=DB_CONFIG['password'],
                 )
+                print(f"[DB] Connected to PostgreSQL at {DB_CONFIG['host']}:{DB_CONFIG['port']}")
             self.init_db()
-            print(f"[DB] Connected to PostgreSQL successfully")
         except psycopg2.Error as e:
             print(f"[ERROR] Failed to connect to PostgreSQL: {e}")
             raise
