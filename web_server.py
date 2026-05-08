@@ -60,23 +60,28 @@ def index():
 
 @app.route("/api/items")
 def api_items():
-    db = get_db()
-    search = request.args.get("q", "").strip()
-    rows = db.search_items(search) if search else db.get_all_items()
-
-    items = []
-    for r in rows:
-        r = dict(r)
-        items.append({
-            "id":            r["id"],
-            "name":          r["name"],
-            "sku":           r.get("sku") or "",
-            "price":         float(r["price"]),
-            "quantity":      r["quantity"],
-            "category_name": r.get("category_name") or "Uncategorized",
-            "image_path":    r.get("image_path") or "",
-        })
-    return jsonify(items)
+    try:
+        db = get_db()
+        search = request.args.get("q", "").strip()
+        rows = db.search_items(search) if search else db.get_all_items()
+        print(f"[DEBUG] get_all_items returned {len(rows)} rows")
+        
+        items = []
+        for r in rows:
+            r = dict(r)
+            items.append({
+                "id":            r["id"],
+                "name":          r["name"],
+                "sku":           r.get("sku") or "",
+                "price":         float(r["price"]),
+                "quantity":      r["quantity"],
+                "category_name": r.get("category_name") or "Uncategorized",
+                "image_path":    r.get("image_path") or "",
+            })
+        return jsonify(items)
+    except Exception as e:
+        print(f"[ERROR] api_items failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ── API: confirm purchase ────────────────────────────────────────────────────
