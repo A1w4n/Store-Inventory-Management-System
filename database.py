@@ -849,18 +849,18 @@ class PostgreSQLDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
-                cursor.execute("""INSERT INTO inventory_movements
-                    (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                    (item_id, "SALE", quantity_sold, current_quantity, new_quantity,
-                    f"Sold {quantity_sold} units at Php {sale_price}", user_id))
+                cursor.execute("SELECT quantity, price FROM items WHERE id = %s FOR UPDATE", (item_id,))
                 result = cursor.fetchone()
+                print(f"[DEBUG] record_sale item_id={item_id} qty_sold={quantity_sold} result={result}")
                 if not result:
+                    print(f"[DEBUG] Item {item_id} not found!")
                     conn.rollback()
                     return False
                 current_quantity, default_price = result
                 sale_price = sale_price or default_price
+                print(f"[DEBUG] current_quantity={current_quantity} quantity_sold={quantity_sold}")
                 if current_quantity < quantity_sold:
+                    print(f"[DEBUG] Insufficient stock!")
                     conn.rollback()
                     return False
                 new_quantity = current_quantity - quantity_sold
@@ -871,9 +871,10 @@ class PostgreSQLDatabase:
                 cursor.execute("""INSERT INTO inventory_movements
                     (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                    ("SALE", quantity_sold, current_quantity, new_quantity,
-                     f"Sold {quantity_sold} units at Php {sale_price}", user_id))
+                    (item_id, "SALE", quantity_sold, current_quantity, new_quantity,
+                    f"Sold {quantity_sold} units at Php {sale_price}", user_id))
                 conn.commit()
+                print(f"[DEBUG] Sale recorded successfully!")
                 return True
             except Exception as e:
                 print(f"[ERROR] record_sale failed: {e}")
