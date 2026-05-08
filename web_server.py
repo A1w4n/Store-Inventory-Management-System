@@ -38,11 +38,12 @@ def health():
     try:
         db = get_db()
         items = db.get_all_items()
-        from database import DB_CONFIG
         return jsonify({
             "status": "ok",
+            "db": "connected",
             "item_count": len(items),
-            "db_host": DB_CONFIG.get("host", DB_CONFIG.get("dsn", "unknown")[:50])
+            "database_url_set": bool(os.environ.get("DATABASE_URL")),
+            "database_url_preview": os.environ.get("DATABASE_URL", "NOT SET")[:50]
         }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

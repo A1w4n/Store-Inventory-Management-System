@@ -846,7 +846,12 @@ class AddItemDialog(QDialog):
                     toast = ToastNotification(f"✓  '{name}' updated successfully", parent)
                     toast.show_toast()
             else:
-                QMessageBox.critical(self, "Error", "Failed to update item. SKU might already exist.")
+                error_msg = "Failed to update item. This could be due to:\n"
+                error_msg += "• SKU already exists (if changed)\n"
+                error_msg += "• Invalid category selection\n"
+                error_msg += "• Database connection issue\n\n"
+                error_msg += "Check the console for more details."
+                QMessageBox.critical(self, "Error Updating Item", error_msg)
         else:
             item_id = self.db.add_item(
                 name=name,
@@ -866,7 +871,13 @@ class AddItemDialog(QDialog):
                     toast = ToastNotification(f"✓  '{name}' added to inventory", parent)
                     toast.show_toast()
             else:
-                QMessageBox.critical(self, "Error", "Failed to add item. SKU might already exist.")
+                # Show better error message
+                error_msg = "Failed to add item. This could be due to:\n"
+                error_msg += "• SKU already exists (if provided)\n"
+                error_msg += "• Invalid category selection\n"
+                error_msg += "• Database connection issue\n\n"
+                error_msg += "Check the console for more details."
+                QMessageBox.critical(self, "Error Adding Item", error_msg)
 
 class DeleteItemDialog(QDialog):
     """Dialog for confirming deletion of a specific item."""
@@ -1243,11 +1254,18 @@ class ItemInfoPage(QWidget):
 
     def refresh_items(self):
         """Refresh item lists from database."""
-        # Clear layouts
+        # Clear layouts - immediate deletion instead of deleteLater to prevent duplicates
         while self.list_layout.count():
-            self.list_layout.takeAt(0).widget().deleteLater()
+            widget = self.list_layout.takeAt(0).widget()
+            if widget:
+                widget.setParent(None)
+                widget.deleteLater()
+        
         while self.grid_layout.count():
-            self.grid_layout.takeAt(0).widget().deleteLater()
+            widget = self.grid_layout.takeAt(0).widget()
+            if widget:
+                widget.setParent(None)
+                widget.deleteLater()
 
         # Get items from database
         if self.search_term:
