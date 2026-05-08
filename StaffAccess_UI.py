@@ -380,6 +380,10 @@ class StaffAccessPage(QWidget):
     # ------------------------------------------------------------------
 
     def _get_url(self) -> str:
+        import os
+        cloud_url = os.environ.get("STAFF_PORTAL_URL", "")
+        if cloud_url:
+            return cloud_url
         return f"http://{_get_local_ip()}:{self.port}"
 
     def _update_qr_pixmap(self):
