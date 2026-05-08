@@ -109,7 +109,14 @@ class BestSellerWidget(QFrame):
         layout.setSpacing(10)
 
         if best_seller_data:
-            item_id, item_name, price, quantity, image_path, total_sold = best_seller_data       
+            # Safe unpacking with defaults
+            data = list(best_seller_data) + [None] * 6
+            item_id = data[0]
+            item_name = data[1]
+            price = data[2] if len(data) > 2 else 0
+            quantity = data[3] if len(data) > 3 else 0
+            image_path = data[4] if len(data) > 4 else ""
+            total_sold = data[5] if len(data) > 5 else 0       
         else:
             item_name = "No Data"
             price = 0
