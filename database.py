@@ -849,7 +849,11 @@ class PostgreSQLDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
-                cursor.execute("SELECT quantity, price FROM items WHERE id = %s FOR UPDATE", (item_id,))
+                cursor.execute("""INSERT INTO inventory_movements
+                    (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (item_id, "SALE", quantity_sold, current_quantity, new_quantity,
+                    f"Sold {quantity_sold} units at Php {sale_price}", user_id))
                 result = cursor.fetchone()
                 if not result:
                     conn.rollback()
