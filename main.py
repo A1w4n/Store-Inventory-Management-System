@@ -20,6 +20,18 @@ sync.sync_all()
 # Fetch variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# For local SQLite
+db = InventoryDatabase(backend="sqlite", db_path="inventory.db")
+
+# For PostgreSQL (if DATABASE_URL is set)
+db = InventoryDatabase(
+    backend="postgres",
+    pg_url="postgresql://neondb_owner:npg_UAfxw7k9KFaP@ep-broad-water-aov46oze-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+)
+
+# ── Pass db into your services ─────────────────────────
+backend = AuthService(db)
+
 if DATABASE_URL:
     try:
         import psycopg2
@@ -31,8 +43,6 @@ if DATABASE_URL:
         print(f"Error connecting to database: {e}")
 else:
     print("[INFO] DATABASE_URL not set, skipping PostgreSQL connectivity test.")
-
-
 
 WEB_PORT = 5000
 

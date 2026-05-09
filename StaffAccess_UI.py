@@ -11,8 +11,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QFont, QImage
 
-from web_server import generate_token
-
 WEB_PORT = 5000
 
 def _get_local_ip() -> str:
@@ -73,7 +71,6 @@ class StaffAccessPage(QWidget):
     def __init__(self, port: int = WEB_PORT, parent=None):
         super().__init__(parent)
         self.port = port
-        self._token = generate_token()   # Generate token on page creation
         self.setStyleSheet("background-color: #f9fafb;")
         self._build_ui()
 
@@ -88,7 +85,7 @@ class StaffAccessPage(QWidget):
         header_row.addWidget(page_title)
         header_row.addStretch()
 
-        self.refresh_btn = QPushButton("🔄  New QR Code")
+        self.refresh_btn = QPushButton("🔄  Refresh Details")
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_btn.setFixedHeight(38)
         self.refresh_btn.setStyleSheet("""
@@ -142,22 +139,13 @@ class StaffAccessPage(QWidget):
         """)
         layout.addWidget(badge, 0, Qt.AlignHCenter)
 
-        # Security badge
-        sec_badge = QLabel("🔐  Token Protected")
-        sec_badge.setAlignment(Qt.AlignCenter)
-        sec_badge.setStyleSheet("""
-            font-size: 11px; font-weight: 600; color: #059669;
-            background-color: #d1fae5; border-radius: 20px; padding: 3px 12px;
-        """)
-        layout.addWidget(sec_badge, 0, Qt.AlignHCenter)
-
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignCenter)
         self.qr_label.setFixedSize(240, 240)
         self._update_qr_pixmap()
         layout.addWidget(self.qr_label, 0, Qt.AlignHCenter)
 
-        note = QLabel("Point your phone camera\nat the QR code above\nEach scan is unique & secure")
+        note = QLabel("Point your phone camera\nat the QR code above\nto access the portal")
         note.setAlignment(Qt.AlignCenter)
         note.setStyleSheet("font-size: 12px; color: #9ca3af;")
         layout.addWidget(note, 0, Qt.AlignHCenter)
@@ -179,7 +167,7 @@ class StaffAccessPage(QWidget):
         divider.setStyleSheet("background-color: #f3f4f6; max-height: 1px;")
         layout.addWidget(divider)
 
-        url_label = QLabel("Portal URL (with access token)")
+        url_label = QLabel("Portal URL")
         url_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #6b7280;")
         layout.addWidget(url_label)
 
@@ -218,8 +206,7 @@ class StaffAccessPage(QWidget):
         rows = [
             ("🌐", "Host",    ip),
             ("🔌", "Port",    str(self.port)),
-            ("🔐", "Auth",    "Token-protected QR"),
-            ("⏱️", "Expires", "When app closes"),
+            ("🔓", "Access",  "Open Network"),
             ("🌍", "Browser", "Any modern browser"),
         ]
         for icon, label, value in rows:
@@ -247,9 +234,9 @@ class StaffAccessPage(QWidget):
         steps_row.setSpacing(16)
 
         steps = [
-            ("1", "#6366f1", "Come to this\nStaff Access page\nin the desktop app."),
+            ("1", "#6366f1", "Ensure your phone\nis connected to the\nsame local network."),
             ("2", "#0ea5e9", "Scan the QR code\nwith your phone\ncamera."),
-            ("3", "#10b981", "The portal opens\nautomatically with\nsecure token access."),
+            ("3", "#10b981", "The portal opens\nautomatically in your\ndefault browser."),
             ("4", "#f59e0b", "Use the portal to\ncheck stock and\nrecord sales."),
         ]
         for num, color, text in steps:
@@ -307,7 +294,7 @@ class StaffAccessPage(QWidget):
     def _get_url(self) -> str:
         import os
         base = os.environ.get("STAFF_PORTAL_URL", f"http://{_get_local_ip()}:{self.port}")
-        return f"{base}?token={self._token}"
+        return base
 
     def _update_qr_pixmap(self):
         url = self._get_url()
@@ -316,9 +303,7 @@ class StaffAccessPage(QWidget):
             pixmap.scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _refresh(self):
-        """Generate a new token and refresh QR code."""
-        from web_server import generate_token
-        self._token = generate_token()
+        """Refresh details."""
         new_url = self._get_url()
         self._update_qr_pixmap()
         self.url_field.setText(new_url)

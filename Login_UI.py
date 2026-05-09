@@ -13,19 +13,6 @@ from PySide6.QtGui import QFont, QColor, QPainter, QLinearGradient
 from auth import LocalAuthStorage
 
 
-class FaceRecognitionThread(QThread):
-    """Thread for face recognition to avoid UI blocking."""
-    login_signal = Signal(bool, str, str)  # success, username, message
-    
-    def __init__(self, face_auth):
-        super().__init__()
-        self.face_auth = face_auth
-    
-    def run(self):
-        success, username, message = self.face_auth.authenticate_user_face()
-        self.login_signal.emit(success, username or "", message)
-
-
 class QRScannerThread(QThread):
     """Thread for QR scanning to avoid UI blocking."""
     login_signal = Signal(bool, str, str)  # success, username, message
@@ -47,19 +34,12 @@ class LoginWindow(QWidget):
         
         # Lazy import of heavy dependencies
         try:
-            from auth import FaceRecognitionAuth
-            self.face_auth = FaceRecognitionAuth(self.storage)
-        except ImportError:
-            self.face_auth = None
-        
-        try:
             from auth import QRCodeAuth
             self.qr_auth = QRCodeAuth(self.storage)
         except ImportError:
             self.qr_auth = None
         
         # Thread references
-        self.face_thread = None
         self.qr_thread = None
         
         self.setWindowTitle("ProStock | Login")
@@ -127,12 +107,7 @@ class LoginWindow(QWidget):
         self._build_traditional_login(self.traditional_tab)
         self.tabs.addTab(self.traditional_tab, "Traditional")
 
-        # Tab 2: Face Recognition
-        self.face_tab = QWidget()
-        self._build_face_login(self.face_tab)
-        self.tabs.addTab(self.face_tab, "Face Recognition")
-
-        # Tab 3: QR Code
+        # Tab 2: QR Code
         self.qr_tab = QWidget()
         self._build_qr_login(self.qr_tab)
         self.tabs.addTab(self.qr_tab, "QR Code")
@@ -211,55 +186,6 @@ class LoginWindow(QWidget):
 
         layout.addStretch()
 
-    def _build_face_login(self, tab):
-        """Build face recognition login tab."""
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setAlignment(Qt.AlignCenter)
-
-        icon_label = QLabel("🔐")
-        icon_label.setStyleSheet("font-size: 60px;")
-        icon_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(icon_label)
-
-        info_label = QLabel("Face Recognition Login")
-        info_label.setStyleSheet("font-size: 18px; font-weight: 600; color: #111827; text-align: center;")
-        info_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(info_label)
-
-        desc_label = QLabel("Click below to authenticate using facial recognition.\nMake sure your face is clearly visible in good lighting.")
-        desc_label.setStyleSheet("font-size: 13px; color: #6b7280; text-align: center; margin: 15px 0px;")
-        desc_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(desc_label)
-
-        layout.addSpacing(20)
-
-        # Authenticate button
-        self.face_auth_btn = QPushButton("Start Face Authentication")
-        self.face_auth_btn.setFixedHeight(45)
-        self.face_auth_btn.setCursor(Qt.PointingHandCursor)
-        self.face_auth_btn.setStyleSheet(self._button_style())
-        self.face_auth_btn.clicked.connect(self._start_face_auth)
-        layout.addWidget(self.face_auth_btn)
-
-        # Face error label
-        self.face_error_label = QLabel("")
-        self.face_error_label.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: bold; text-align: center;")
-        self.face_error_label.hide()
-        layout.addWidget(self.face_error_label)
-
-        layout.addSpacing(20)
-
-        # Register face button
-        self.register_face_btn = QPushButton("Register New Face")
-        self.register_face_btn.setFixedHeight(40)
-        self.register_face_btn.setCursor(Qt.PointingHandCursor)
-        self.register_face_btn.setStyleSheet(self._secondary_button_style())
-        self.register_face_btn.clicked.connect(self._register_new_face)
-        layout.addWidget(self.register_face_btn)
-
-        layout.addStretch()
-
     def _build_qr_login(self, tab):
         """Build QR code login tab."""
         layout = QVBoxLayout(tab)
@@ -328,60 +254,6 @@ class LoginWindow(QWidget):
                 self._show_error(message, self.error_label)
         else:
             QMessageBox.warning(self, "Error", "Auth service not configured")
-
-    def _start_face_auth(self):
-        """Start face authentication in a separate thread."""
-        if not self.face_auth:
-            QMessageBox.warning(self, "Error", "Face recognition not available. Install opencv-python and face-recognition packages.")
-            return
-        
-        self.face_auth_btn.setEnabled(False)
-        self.face_auth_btn.setText("Scanning...")
-        self.face_error_label.hide()
-
-        self.face_thread = FaceRecognitionThread(self.face_auth)
-        self.face_thread.login_signal.connect(self._handle_face_auth_result)
-        self.face_thread.start()
-
-    def _handle_face_auth_result(self, success, username, message):
-        """Handle face authentication result."""
-        self.face_auth_btn.setEnabled(True)
-        self.face_auth_btn.setText("Start Face Authentication")
-
-        if success:
-            self._on_login_success(username)
-        else:
-            self._show_error(message, self.face_error_label)
-
-    def _register_new_face(self):
-        """Register a new face."""
-        if not self.face_auth:
-            QMessageBox.warning(self, "Error", "Face recognition not available. Install opencv-python and face-recognition packages.")
-            return
-        
-        username, ok = self._get_username_dialog()
-        if not ok or not username:
-            return
-
-        QMessageBox.information(self, "Face Registration", 
-                               "Please look at the camera for face registration.\n"
-                               "The process will capture 5 samples of your face.")
-
-        self.register_face_btn.setEnabled(False)
-        self.register_face_btn.setText("Registering...")
-
-        try:
-            success, message = self.face_auth.capture_and_register_face(username)
-            if success:
-                QMessageBox.information(self, "Success", message)
-                self.face_auth._load_known_faces()
-            else:
-                self._show_error(message, self.face_error_label)
-        except Exception as e:
-            self._show_error(f"Error: {str(e)}", self.face_error_label)
-        finally:
-            self.register_face_btn.setEnabled(True)
-            self.register_face_btn.setText("Register New Face")
 
     def _start_qr_auth(self):
         """Start QR code authentication in a separate thread."""

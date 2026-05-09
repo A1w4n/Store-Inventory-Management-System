@@ -16,6 +16,8 @@ Usage:
 
 import sqlite3
 import hashlib
+import psycopg2
+from psycopg2 import pool, extras
 from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
@@ -50,25 +52,27 @@ DEBUG_SQL = False
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class InventoryDatabase:
-    """
-    Smart database wrapper that auto-selects SQLite or PostgreSQL.
-    All methods have identical signatures and return types.
-    """
+    def __init__(self, backend="sqlite", db_path="inventory.db", pg_url=None):
+        self.backend = backend
+        self.db_path = db_path
+        self.pg_url = pg_url
 
-    def __new__(cls, db_path="inventory.db"):
-        """Factory method - returns appropriate database implementation."""
-        if USE_LOCAL_SQLITE:
-            return SQLiteDatabase(db_path)
+    def connect(self):
+        if self.backend == "sqlite":
+            return sqlite3.connect(self.db_path)
+        elif self.backend == "postgres":
+            return psycopg2.connect(self.pg_url)
         else:
-            try:
-                return PostgreSQLDatabase()
-            except Exception as e:
-                if isinstance(e, ImportError):
-                    print("[WARNING] psycopg2 not found. Install with: pip install psycopg2")
-                else:
-                    print(f"[WARNING] PostgreSQL unavailable: {e}")
-                print("[FALLBACK] Using SQLite instead...")
-                return SQLiteDatabase(db_path)
+            raise ValueError(f"Unsupported backend: {self.backend}")
+
+    def get_user_by_username(self, username):
+        conn = self.connect()
+        cursor = conn.cursor()
+        if self.backend == "sqlite":
+            cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        else:
+            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+        return cursor.fetchone()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -607,6 +611,109 @@ class SQLiteDatabase:
         
         self.disconnect()
         return trend
+    
+    # Additional methods for inventory movements, sales history, etc. can be added here as needed.
+
+    def __init__(self, db_path="inventory.db"):
+        import sqlite3
+        self.conn = sqlite3.connect(db_path)
+        self.cur = self.conn.cursor()
+
+    # ✅ Ensure table exists with given columns
+    def create_table_if_not_exists(self, table_name, columns):
+        col_defs = ", ".join([f"{col} TEXT" for col in columns])
+        self.cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                {col_defs}
+            )
+        """)
+        self.conn.commit()
+
+    # ✅ Clear all rows from a table
+    def clear_table(self, table_name):
+        self.cur.execute(f"DELETE FROM {table_name}")
+        self.conn.commit()
+
+    # ✅ Insert multiple rows at once
+    def bulk_insert(self, table_name, columns, rows):
+        placeholders = ", ".join(["?" for _ in columns])
+        self.cur.executemany(
+            f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})",
+            rows
+        )
+        self.conn.commit()
+
+    def __init__(self, db_path="inventory.db"):
+        import sqlite3
+        self.conn = sqlite3.connect(db_path)
+        self.cur = self.conn.cursor()
+
+    # ✅ Ensure table exists with correct schema
+    def create_table_if_not_exists(self, table_name, columns):
+        if table_name == "items":
+            self.cur.execute("""
+                CREATE TABLE IF NOT EXISTS items (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    quantity INTEGER,
+                    created_at TIMESTAMP
+                )
+            """)
+        elif table_name == "transactions":
+            self.cur.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id TEXT PRIMARY KEY,
+                    item_id TEXT,
+                    change INTEGER,
+                    timestamp TIMESTAMP
+                )
+            """)
+        elif table_name == "users":
+            self.cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT,
+                    role TEXT,
+                    created_at TIMESTAMP
+                )
+            """)
+        self.conn.commit()
+
+    # ✅ Clear all rows from a table
+    def clear_table(self, table_name):
+        self.cur.execute(f"DELETE FROM {table_name}")
+        self.conn.commit()
+
+    # ✅ Insert multiple rows at once
+    def bulk_insert(self, table_name, columns, rows):
+        placeholders = ", ".join(["?" for _ in columns])
+        self.cur.executemany(
+            f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})",
+            rows
+        )
+        self.conn.commit()    
+
+    def __init__(self, backend="sqlite", db_path="inventory.db", pg_url=None):
+        self.backend = backend
+        self.db_path = db_path
+        self.pg_url = pg_url
+
+    def connect(self):
+        if self.backend == "sqlite":
+            return sqlite3.connect(self.db_path)
+        elif self.backend == "postgres":
+            return psycopg2.connect(self.pg_url)
+        else:
+            raise ValueError(f"Unsupported backend: {self.backend}")
+
+    def get_user_by_username(self, username):
+        conn = self.connect()
+        cursor = conn.cursor()
+        if self.backend == "sqlite":
+            cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        else:  # PostgreSQL uses %s placeholders
+            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+        return cursor.fetchone()    
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
