@@ -265,7 +265,13 @@ class SQLiteDatabase:
             item_id = cursor.lastrowid
             self.disconnect()
             return item_id
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
+            print(f"[DB ERROR] Failed to add item: {e}")
+            print(f"[DB] Item details: name={name}, sku={sku}, price={price}")
+            self.disconnect()
+            return None
+        except Exception as e:
+            print(f"[DB ERROR] Unexpected error adding item: {e}")
             self.disconnect()
             return None
 
@@ -754,7 +760,13 @@ class PostgreSQLDatabase:
                 item_id = cursor.fetchone()[0]
                 conn.commit()
                 return item_id
-            except self.psycopg2.IntegrityError:
+            except self.psycopg2.IntegrityError as e:
+                print(f"[DB ERROR] Failed to add item: {e}")
+                print(f"[DB] Item details: name={name}, sku={sku}, price={price}")
+                conn.rollback()
+                return None
+            except Exception as e:
+                print(f"[DB ERROR] Unexpected error adding item: {e}")
                 conn.rollback()
                 return None
 

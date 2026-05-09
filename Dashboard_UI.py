@@ -12,7 +12,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from Item_Info_UI import ItemInfoPage
-from Analytics_UI import AnalyticsPage, SalesAnalysisStandalonePage, InventoryHealthStandalonePage
+from SalesAnalysis_UI import SalesAnalysisPage
+from InventoryHealth_UI import InventoryHealthPage
+from RestockForecast_UI import RestockForecastPage
 from StaffAccess_UI import StaffAccessPage
 from database import InventoryDatabase
 
@@ -263,15 +265,15 @@ class InventoryDashboard(QWidget):
         self.content_stack.addWidget(self.item_info_page)
         
         # 2: Sales Analysis
-        self.sales_analysis_page = SalesAnalysisStandalonePage(self.db)
+        self.sales_analysis_page = SalesAnalysisPage(self.db)
         self.content_stack.addWidget(self.sales_analysis_page)
         
         # 3: Inventory Health
-        self.inventory_health_page = InventoryHealthStandalonePage(self.db)
+        self.inventory_health_page = InventoryHealthPage(self.db)
         self.content_stack.addWidget(self.inventory_health_page)
         
         # 4: Restock Forecast
-        self.analytics_page = AnalyticsPage(self.db)
+        self.analytics_page = RestockForecastPage(self.db)
         self.content_stack.addWidget(self.analytics_page)   
         
         # 5: Staff Access
