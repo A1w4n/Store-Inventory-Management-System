@@ -1,6 +1,14 @@
 from dotenv import load_dotenv
 from cloud_sync import CloudSync
 import os
+import sys
+from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import Signal
+from auth_service import AuthService
+from Login_UI import LoginWindow as UI_Base
+from Dashboard_UI import InventoryDashboard
+from database import InventoryDatabase
+from web_server import start_server 
 
 # Load environment variables from .env
 load_dotenv()
@@ -24,15 +32,7 @@ if DATABASE_URL:
 else:
     print("[INFO] DATABASE_URL not set, skipping PostgreSQL connectivity test.")
 
-import sys
-from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import Signal
 
-from auth_service import AuthService
-from Login_UI import LoginWindow as UI_Base
-from Dashboard_UI import InventoryDashboard
-from database import InventoryDatabase
-from web_server import start_server   # ← Staff portal
 
 WEB_PORT = 5000
 
