@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QAction, QPixmap
-import qrcode
+import barcode
+from barcode.writer import ImageWriter
 import json
 from PIL import Image
 import io
@@ -93,10 +94,10 @@ class ItemRow(QFrame):
             self.on_select(self.item_data)
         super().mousePressEvent(event)
 
-    def show_qr_code(self):
-        """Show QR code dialog for this item."""
+    def show_barcode(self):
+        """Show Barcode dialog for this item."""
         if self.item_data:
-            dialog = QRCodeDialog(self.item_data)
+            dialog = BarcodeDialog(self.item_data)
             dialog.exec()
 
 class ItemCard(QFrame):
@@ -1034,13 +1035,13 @@ class DeleteItemDialog(QDialog):
             QMessageBox.critical(self, "Error", "Failed to delete item.")
 
 
-class QRCodeDialog(QDialog):
-    """Dialog to display QR code for an item."""
+class BarcodeDialog(QDialog):
+    """Dialog to display Barcode for an item."""
     def __init__(self, item_data, parent=None):
         super().__init__(parent)
         self.item_data = item_data
-        self.setWindowTitle(f"QR Code for {item_data['name']}")
-        self.setGeometry(100, 100, 300, 400)
+        self.setWindowTitle(f"Barcode for {item_data['name']}")
+        self.setGeometry(100, 100, 300, 200)
         self._build_ui()
 
     def _build_ui(self):
@@ -1051,41 +1052,30 @@ class QRCodeDialog(QDialog):
         item_data = dict(self.item_data)  # Convert from RowProxy to dict if needed
 
         # Title
-        title = QLabel(f"QR Code for {self.item_data['name']}")
+        title = QLabel(f"Barcode for {self.item_data['name']}")
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
 
-        # QR Code image
-        qr_data = {
-            "id": self.item_data['id'],
-            "name": self.item_data['name'],
-            "sku": self.item_data.get('sku'),
-            "price": self.item_data['price'],
-            "quantity": self.item_data['quantity']
-        }
-        qr_json = json.dumps(qr_data)
-
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(qr_json)
-        qr.make(fit=True)
-        img = qr.make_image(fill='black', back_color='white')
-
-        # Convert PIL image to QPixmap
-        from PIL import Image
+        # Barcode image
+        sku = self.item_data.get('sku')
+        if not sku:
+            sku = f"ID-{self.item_data['id']}"
+        
         import io
-        buffer = io.BytesIO()
-        img.save(buffer, format='PNG')
-        buffer.seek(0)
+        Code128 = barcode.get_barcode_class('code128')
+        rv = io.BytesIO()
+        Code128(sku, writer=ImageWriter()).write(rv)
+        
         pixmap = QPixmap()
-        pixmap.loadFromData(buffer.read())
+        pixmap.loadFromData(rv.getvalue())
 
-        qr_label = QLabel()
-        qr_label.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        qr_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(qr_label)
+        barcode_label = QLabel()
+        barcode_label.setPixmap(pixmap.scaled(250, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        barcode_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(barcode_label)
 
         # Info text
-        info = QLabel("Scan this QR code to quickly access item details.")
+        info = QLabel("Scan this barcode to quickly access item details.")
         info.setWordWrap(True)
         info.setStyleSheet("color: #6b7280; font-size: 12px;")
         layout.addWidget(info)
@@ -1356,44 +1346,34 @@ class ItemInfoPage(QWidget):
         self.detail_meta.setStyleSheet("color: #4b5563; font-size: 13px;")
         panel_layout.addWidget(self.detail_meta)
 
-        self.detail_description = QLabel("Select an item from the list or grid to see more information and the QR code.")
+        self.detail_description = QLabel("Select an item from the list or grid to see more information and the barcode.")
         self.detail_description.setWordWrap(True)
         self.detail_description.setStyleSheet("color: #6b7280; font-size: 12px;")
         panel_layout.addWidget(self.detail_description)
 
-        self.detail_qr = QLabel()
-        self.detail_qr.setFixedSize(180, 180)
-        self.detail_qr.setAlignment(Qt.AlignCenter)
-        self.detail_qr.setStyleSheet("background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;")
-        panel_layout.addWidget(self.detail_qr, 0, Qt.AlignHCenter)
+        self.detail_barcode = QLabel()
+        self.detail_barcode.setFixedSize(220, 100)
+        self.detail_barcode.setAlignment(Qt.AlignCenter)
+        self.detail_barcode.setStyleSheet("background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;")
+        panel_layout.addWidget(self.detail_barcode, 0, Qt.AlignHCenter)
 
         panel_layout.addStretch()
         return panel
 
-    def _create_qr_pixmap(self, item_data, size=180):
+    def _create_barcode_pixmap(self, item_data, width=200, height=80):
         item_data = dict(item_data)  # Convert from RowProxy to dict if needed
-        qr_data = {
-            "id": item_data.get('id'),
-            "name": item_data.get('name'),
-            "sku": item_data.get('sku'),
-            "price": item_data.get('price'),
-            "quantity": item_data.get('quantity')
-        }
-        qr_json = json.dumps(qr_data)
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(qr_json)
-        qr.make(fit=True)
-        img = qr.make_image(fill='black', back_color='white')
+        sku = item_data.get('sku')
+        if not sku:
+            sku = f"ID-{item_data['id']}"
         
-        from PIL import Image
         import io
+        Code128 = barcode.get_barcode_class('code128')
+        rv = io.BytesIO()
+        Code128(sku, writer=ImageWriter()).write(rv)
         
-        buffer = io.BytesIO()
-        img.save(buffer, format='PNG')
-        buffer.seek(0)
         pixmap = QPixmap()
-        pixmap.loadFromData(buffer.read())
-        return pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        pixmap.loadFromData(rv.getvalue())
+        return pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
     def display_item_details(self, item_data):
         item_data = dict(item_data)  # Convert from RowProxy to dict if needed
@@ -1423,7 +1403,7 @@ class ItemInfoPage(QWidget):
         )
         description = item_data.get('description') or 'No description available.'
         self.detail_description.setText(description)
-        self.detail_qr.setPixmap(self._create_qr_pixmap(item_data, size=180))
+        self.detail_barcode.setPixmap(self._create_barcode_pixmap(item_data))
 
     def show_add_dialog(self):
         """Show dialog to add a new item."""
@@ -1464,8 +1444,8 @@ class ItemInfoPage(QWidget):
             self.detail_image.setText("No item selected")
             self.detail_name.setText("Select an item to view details")
             self.detail_meta.setText("<i>SKU, category, price, and stock will appear here.</i>")
-            self.detail_description.setText("Select an item from the list or grid to see more information and the QR code.")
-            self.detail_qr.setPixmap(QPixmap())
+            self.detail_description.setText("Select an item from the list or grid to see more information and the barcode.")
+            self.detail_barcode.setPixmap(QPixmap())
             self.search_input.clear()
             self.refresh_items()
             self.item_changed.emit()

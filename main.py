@@ -1,8 +1,13 @@
 from dotenv import load_dotenv
+from cloud_sync import CloudSync
 import os
 
 # Load environment variables from .env
 load_dotenv()
+
+# Run sync before launching app
+sync = CloudSync()
+sync.sync_all()
 
 # Fetch variables
 DATABASE_URL = os.getenv("DATABASE_URL")
