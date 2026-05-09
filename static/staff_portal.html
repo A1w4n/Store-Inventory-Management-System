@@ -314,19 +314,15 @@
 </head>
 <body>
 
-<!-- NAV -->
 <nav>
   <span class="logo">📦</span>
   <h1>ProStock — Staff Purchase Portal</h1>
   <span class="badge" id="nav-badge">Loading inventory…</span>
 </nav>
 
-<!-- LAYOUT -->
 <div class="layout">
 
-  <!-- LEFT: Catalog -->
   <div>
-    <!-- Staff name + search -->
     <div class="card" style="margin-bottom:18px;">
       <div class="card-body">
         <div class="staff-row">
@@ -339,7 +335,6 @@
       </div>
     </div>
 
-    <!-- Item grid -->
     <div class="card">
       <div class="card-header">
         <span class="icon">🛍️</span>
@@ -354,7 +349,6 @@
     </div>
   </div>
 
-  <!-- RIGHT: Cart -->
   <div class="cart-panel">
     <div class="card">
       <div class="card-header">
@@ -372,7 +366,6 @@
 
 </div>
 
-<!-- RECEIPT MODAL -->
 <div class="modal-backdrop" id="modal">
   <div class="modal">
     <div class="modal-icon" id="modal-icon">✅</div>
@@ -386,7 +379,6 @@
   </div>
 </div>
 
-<!-- TOAST -->
 <div id="toast"></div>
 
 <script>
@@ -542,12 +534,11 @@ async function confirmPurchase() {
 
   const payload = {
     staff_name: staffName,
-    items: ids.map(id => ({ id, qty: cart[id] })),
-    token: TOKEN,
+    items: ids.map(id => ({ id, qty: cart[id] }))
   };
 
   try {
-    const res  = await fetch(apiUrl("/api/purchase"), {
+    const res  = await fetch("/api/purchase", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -643,28 +634,8 @@ document.getElementById("modal").addEventListener("click", e => {
 // ── Auto-refresh every 30 s to reflect desktop app changes ────────────────
 setInterval(() => loadItems(document.getElementById("search-box").value.trim()), 30000);
 
-// ── Expired session handler ────────────────────────────────────────────────
-function showExpired() {
-  document.body.innerHTML = `
-  <div style="font-family:'Segoe UI',system-ui,sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;">
-    <div style="background:white;border-radius:20px;border:1px solid #e5e7eb;box-shadow:0 4px 24px rgba(0,0,0,.08);padding:48px 40px;max-width:440px;width:90%;text-align:center;">
-      <div style="font-size:64px;margin-bottom:20px;">🔒</div>
-      <div style="display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:20px;padding:4px 14px;font-size:12px;font-weight:600;margin-bottom:20px;">⚠️ Access Expired</div>
-      <h1 style="font-size:24px;font-weight:700;color:#111827;margin-bottom:12px;">Portal Access Expired</h1>
-      <p style="font-size:15px;color:#6b7280;line-height:1.6;margin-bottom:8px;">This QR code link is no longer valid.</p>
-      <div style="background:#f9fafb;border-radius:12px;border:1px solid #e5e7eb;padding:20px 24px;margin:24px 0;text-align:left;">
-        <p style="font-size:14px;color:#374151;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#6366f1;color:white;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">1</span>Open the <strong>ProStock desktop app</strong></p>
-        <p style="font-size:14px;color:#374151;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#6366f1;color:white;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">2</span>Go to <strong>Staff Access</strong> in the sidebar</p>
-        <p style="font-size:14px;color:#374151;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#6366f1;color:white;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">3</span><strong>Scan the new QR code</strong> shown on screen</p>
-        <p style="font-size:14px;color:#374151;"><span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#6366f1;color:white;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">4</span>The portal will open with fresh access</p>
-      </div>
-      <p style="font-size:13px;color:#9ca3af;">Each QR code is valid for one session only.</p>
-    </div>
-  </div>`;
-}
-
 // ── Init ───────────────────────────────────────────────────────────────────
-if (!TOKEN) { showExpired(); } else { loadItems(); }
+loadItems();
 </script>
 </body>
 </html>
