@@ -1,7 +1,7 @@
 # cloud_sync.py
 import os
 import psycopg2
-from database import SQLiteDatabase, PostgresDatabase
+from database import SQLiteDatabase, PostgreSQLDatabase
 
 class CloudSync:
     """
