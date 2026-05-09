@@ -16,6 +16,8 @@ from SalesAnalysis_UI import SalesAnalysisPage
 from InventoryHealth_UI import InventoryHealthPage
 from RestockForecast_UI import RestockForecastPage
 from StaffAccess_UI import StaffAccessPage
+from Settings_UI import SettingsPage
+from settings_service import SettingsService
 from database import InventoryDatabase
 
 class DashboardCard(QFrame):
@@ -281,7 +283,9 @@ class InventoryDashboard(QWidget):
         self.content_stack.addWidget(self.staff_access_page)
         
         # 6: Settings
-        self.content_stack.addWidget(QLabel("Settings Page Placeholder"))
+        self._settings_svc = SettingsService()
+        self.settings_page = SettingsPage(self._settings_svc)
+        self.content_stack.addWidget(self.settings_page) 
         
         self.outer_layout.addWidget(self.content_stack)
 
