@@ -1,24 +1,24 @@
 # Settings_UI.py — Settings page for ProStock Inventory Management System
-# Matches the existing Dashboard/StaffAccess style: PySide6, #111827 sidebar,
-# white cards, indigo (#6366f1) accents, Segoe UI font.
+# Single scrollable page layout — all sections stacked vertically, no inner nav.
+# Matches the existing Dashboard/StaffAccess style: PySide6, white cards,
+# indigo (#6366f1) accents, Segoe UI font.
 
 import sys
-from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton, QScrollArea,
     QLineEdit, QComboBox, QCheckBox, QSpinBox,
-    QFileDialog, QMessageBox, QStackedWidget,
+    QFileDialog, QMessageBox,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 
 from settings_service import SettingsService
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Reusable sub-widgets
+#  Shared style constants
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CARD_STYLE = """
@@ -27,7 +27,7 @@ _CARD_STYLE = """
         border-radius: 10px;
         border: 1px solid #e5e7eb;
     }
-    QLabel  { border: none; color: #111827; }
+    QLabel { border: none; color: #111827; }
     QLineEdit {
         background-color: #f9fafb;
         border: 1px solid #d1d5db;
@@ -35,8 +35,9 @@ _CARD_STYLE = """
         padding: 6px 10px;
         font-size: 13px;
         color: #111827;
+        min-width: 200px;
     }
-    QLineEdit:focus  { border-color: #6366f1; }
+    QLineEdit:focus { border-color: #6366f1; }
     QComboBox {
         background-color: #f9fafb;
         border: 1px solid #d1d5db;
@@ -44,9 +45,9 @@ _CARD_STYLE = """
         padding: 6px 10px;
         font-size: 13px;
         color: #111827;
-        min-width: 180px;
+        min-width: 200px;
     }
-    QComboBox:focus  { border-color: #6366f1; }
+    QComboBox:focus { border-color: #6366f1; }
     QComboBox::drop-down { border: none; width: 24px; }
     QSpinBox {
         background-color: #f9fafb;
@@ -55,7 +56,7 @@ _CARD_STYLE = """
         padding: 6px 10px;
         font-size: 13px;
         color: #111827;
-        min-width: 100px;
+        min-width: 120px;
     }
     QSpinBox:focus { border-color: #6366f1; }
     QCheckBox {
@@ -89,7 +90,7 @@ _SAVE_BTN_STYLE = """
 _DANGER_BTN_STYLE = """
     QPushButton {
         background-color: #fee2e2; color: #dc2626;
-        border-radius: 8px; padding: 10px 20px;
+        border-radius: 8px; padding: 8px 18px;
         font-size: 13px; font-weight: 600;
         border: 1px solid #fca5a5;
     }
@@ -99,13 +100,17 @@ _DANGER_BTN_STYLE = """
 _SECONDARY_BTN_STYLE = """
     QPushButton {
         background-color: #f3f4f6; color: #374151;
-        border-radius: 8px; padding: 10px 20px;
+        border-radius: 8px; padding: 8px 18px;
         font-size: 13px; font-weight: 600;
         border: 1px solid #d1d5db;
     }
     QPushButton:hover { background-color: #e5e7eb; }
 """
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Reusable builder helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _section_card() -> QFrame:
     card = QFrame()
@@ -127,58 +132,145 @@ def _divider() -> QFrame:
     return line
 
 
-def _row_label(text: str, hint: str = "") -> QVBoxLayout:
-    """Returns a vertical layout with a bold label and optional hint."""
-    vbox = QVBoxLayout()
-    vbox.setSpacing(2)
-    lbl = QLabel(text)
+def _field_row(label: str, widget, hint: str = "") -> QHBoxLayout:
+    """Bold label (+ optional grey hint) on the left, input widget on the right."""
+    row = QHBoxLayout()
+    row.setSpacing(16)
+
+    label_col = QVBoxLayout()
+    label_col.setSpacing(2)
+    lbl = QLabel(label)
     lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
-    vbox.addWidget(lbl)
+    label_col.addWidget(lbl)
     if hint:
         h = QLabel(hint)
         h.setStyleSheet("font-size: 11px; color: #9ca3af;")
-        vbox.addWidget(h)
-    return vbox
+        label_col.addWidget(h)
 
-
-def _field_row(label: str, widget, hint: str = "") -> QHBoxLayout:
-    """Label on the left, input widget on the right."""
-    row = QHBoxLayout()
-    row.setSpacing(16)
-    row.addLayout(_row_label(label, hint), 1)
+    row.addLayout(label_col, 1)
     row.addWidget(widget, 0, Qt.AlignRight)
     return row
 
 
+def _toggle_row(label: str, checkbox: QCheckBox, hint: str = "") -> QHBoxLayout:
+    """Label on the left, checkbox on the right."""
+    row = QHBoxLayout()
+    row.setSpacing(16)
+
+    label_col = QVBoxLayout()
+    label_col.setSpacing(2)
+    lbl = QLabel(label)
+    lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
+    label_col.addWidget(lbl)
+    if hint:
+        h = QLabel(hint)
+        h.setStyleSheet("font-size: 11px; color: #9ca3af;")
+        label_col.addWidget(h)
+
+    row.addLayout(label_col, 1)
+    row.addWidget(checkbox, 0, Qt.AlignRight)
+    return row
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  Section panels (each tab's content)
+#  Main Settings Page
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _GeneralPanel(QWidget):
-    """Store name, currency, timezone, date format."""
+class SettingsPage(QWidget):
+    """
+    Single-page Settings UI — all sections stacked vertically in one scroll area.
+    Drop into Dashboard's QStackedWidget at index 6.
 
-    def __init__(self, svc: SettingsService, parent=None):
+    Usage in Dashboard_UI.py:
+        from Settings_UI import SettingsPage
+        from settings_service import SettingsService
+
+        self._settings_svc = SettingsService()
+        self.settings_page = SettingsPage(self._settings_svc)
+        self.content_stack.addWidget(self.settings_page)   # index 6
+    """
+
+    settings_saved = Signal(dict)
+
+    def __init__(self, svc: SettingsService = None, parent=None):
         super().__init__(parent)
-        self._svc = svc
-        self.setStyleSheet("background: transparent;")
-        self._build()
+        self._svc = svc or SettingsService()
+        self.setStyleSheet("background-color: #f9fafb;")
+        self._build_ui()
 
-    def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+    # ------------------------------------------------------------------ #
+    #  UI construction                                                     #
+    # ------------------------------------------------------------------ #
 
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Top header (matches Dashboard header style) ───────────────────
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(24, 20, 24, 0)
+        header_layout.setSpacing(0)
+
+        title_row = QHBoxLayout()
+        title_lbl = QLabel("Settings")
+        title_lbl.setStyleSheet("color: #111827; font-size: 40px; font-weight: 700; border: none;")
+        title_row.addWidget(title_lbl)
+        title_row.addStretch()
+
+        self._save_btn = QPushButton("💾  Save Changes")
+        self._save_btn.setCursor(Qt.PointingHandCursor)
+        self._save_btn.setFixedHeight(40)
+        self._save_btn.setStyleSheet(_SAVE_BTN_STYLE)
+        self._save_btn.clicked.connect(self._save_all)
+        title_row.addWidget(self._save_btn)
+        header_layout.addLayout(title_row)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #111827; max-height: 2px; margin-top: 8px;")
+        header_layout.addWidget(line)
+
+        root.addLayout(header_layout)
+
+        # ── Scrollable content ────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        self._cl = QVBoxLayout(content)
+        self._cl.setContentsMargins(24, 20, 24, 32)
+        self._cl.setSpacing(20)
+
+        self._build_general_section()
+        self._build_inventory_section()
+        self._build_notifications_section()
+        self._build_ai_section()
+        self._build_account_section()
+        self._build_data_section()   # Danger zone last
+
+        self._cl.addStretch()
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
+
+    # ------------------------------------------------------------------ #
+    #  Section builders                                                    #
+    # ------------------------------------------------------------------ #
+
+    def _build_general_section(self):
         card = _section_card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(24, 20, 24, 24)
-        cl.setSpacing(16)
+        cl.setSpacing(14)
 
         cl.addWidget(_section_title("🏪  Store Information"))
         cl.addWidget(_divider())
 
         self.store_name = QLineEdit(self._svc.get("store_name"))
         self.store_name.setPlaceholderText("e.g. Juan's Hardware Store")
-        cl.addLayout(_field_row("Store Name", self.store_name, "Shown in reports and exports"))
+        cl.addLayout(_field_row("Store Name", self.store_name, "Displayed in reports and exports"))
 
         self.currency = QComboBox()
         for cur in ["PHP", "USD", "EUR", "SGD", "JPY", "GBP"]:
@@ -199,36 +291,13 @@ class _GeneralPanel(QWidget):
         self.date_fmt.setCurrentText(self._svc.get("date_format"))
         cl.addLayout(_field_row("Date Format", self.date_fmt))
 
-        layout.addWidget(card)
-        layout.addStretch()
+        self._cl.addWidget(card)
 
-    def collect(self) -> dict:
-        return {
-            "store_name": self.store_name.text().strip(),
-            "store_currency": self.currency.currentText(),
-            "store_timezone": self.timezone.currentText(),
-            "date_format": self.date_fmt.currentText(),
-        }
-
-
-class _InventoryPanel(QWidget):
-    """Low-stock threshold, barcode format, auto-alerts."""
-
-    def __init__(self, svc: SettingsService, parent=None):
-        super().__init__(parent)
-        self._svc = svc
-        self.setStyleSheet("background: transparent;")
-        self._build()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
+    def _build_inventory_section(self):
         card = _section_card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(24, 20, 24, 24)
-        cl.setSpacing(16)
+        cl.setSpacing(14)
 
         cl.addWidget(_section_title("📦  Inventory Defaults"))
         cl.addWidget(_divider())
@@ -239,7 +308,7 @@ class _InventoryPanel(QWidget):
         cl.addLayout(_field_row(
             "Low-Stock Threshold",
             self.threshold,
-            "Items below this quantity trigger a low-stock alert"
+            "Items below this quantity will trigger a low-stock alert"
         ))
 
         self.barcode_fmt = QComboBox()
@@ -248,123 +317,82 @@ class _InventoryPanel(QWidget):
         self.barcode_fmt.setCurrentText(self._svc.get("barcode_format"))
         cl.addLayout(_field_row("Default Barcode Format", self.barcode_fmt))
 
-        self.auto_alerts = QCheckBox("Automatically show low-stock alerts on startup")
+        self.auto_alerts = QCheckBox()
         self.auto_alerts.setChecked(bool(self._svc.get("auto_restock_alerts")))
-        cl.addWidget(self.auto_alerts)
+        cl.addLayout(_toggle_row(
+            "Auto Low-Stock Alerts on Startup",
+            self.auto_alerts,
+            "Automatically show low-stock alerts when the app opens"
+        ))
 
-        layout.addWidget(card)
-        layout.addStretch()
+        self._cl.addWidget(card)
 
-    def collect(self) -> dict:
-        return {
-            "low_stock_threshold": self.threshold.value(),
-            "barcode_format": self.barcode_fmt.currentText(),
-            "auto_restock_alerts": self.auto_alerts.isChecked(),
-        }
-
-
-class _NotificationsPanel(QWidget):
-    """Toggle individual notification types."""
-
-    def __init__(self, svc: SettingsService, parent=None):
-        super().__init__(parent)
-        self._svc = svc
-        self.setStyleSheet("background: transparent;")
-        self._build()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
+    def _build_notifications_section(self):
         card = _section_card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(24, 20, 24, 24)
-        cl.setSpacing(16)
+        cl.setSpacing(14)
 
         cl.addWidget(_section_title("🔔  Notification Preferences"))
         cl.addWidget(_divider())
 
-        notifs = [
-            ("notify_low_stock",        "⚠️  Low-stock alerts",         "Notify when any item drops below the threshold"),
-            ("notify_new_sales",        "🛒  New sale recorded",         "Notify each time a sale transaction is saved"),
-            ("notify_restock_forecast", "📈  Restock forecast updates",  "Notify when the AI forecast refreshes"),
-        ]
+        self.notify_low_stock = QCheckBox()
+        self.notify_low_stock.setChecked(bool(self._svc.get("notify_low_stock")))
+        cl.addLayout(_toggle_row(
+            "⚠️  Low-Stock Alerts",
+            self.notify_low_stock,
+            "Notify when any item drops below the threshold"
+        ))
+        cl.addWidget(_divider())
 
-        self._checks: dict[str, QCheckBox] = {}
-        for key, label, hint in notifs:
-            row = QHBoxLayout()
-            lbl_col = QVBoxLayout()
-            lbl_col.setSpacing(2)
-            l = QLabel(label)
-            l.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
-            lbl_col.addWidget(l)
-            h = QLabel(hint)
-            h.setStyleSheet("font-size: 11px; color: #9ca3af;")
-            lbl_col.addWidget(h)
-            row.addLayout(lbl_col, 1)
-            cb = QCheckBox()
-            cb.setChecked(bool(self._svc.get(key)))
-            self._checks[key] = cb
-            row.addWidget(cb, 0, Qt.AlignRight)
-            cl.addLayout(row)
-            cl.addWidget(_divider())
+        self.notify_new_sales = QCheckBox()
+        self.notify_new_sales.setChecked(bool(self._svc.get("notify_new_sales")))
+        cl.addLayout(_toggle_row(
+            "🛒  New Sale Recorded",
+            self.notify_new_sales,
+            "Notify each time a sales transaction is saved"
+        ))
+        cl.addWidget(_divider())
 
-        layout.addWidget(card)
-        layout.addStretch()
+        self.notify_restock = QCheckBox()
+        self.notify_restock.setChecked(bool(self._svc.get("notify_restock_forecast")))
+        cl.addLayout(_toggle_row(
+            "📈  Restock Forecast Updates",
+            self.notify_restock,
+            "Notify when the AI forecast model refreshes"
+        ))
 
-    def collect(self) -> dict:
-        return {k: cb.isChecked() for k, cb in self._checks.items()}
+        self._cl.addWidget(card)
 
-
-class _AIPanel(QWidget):
-    """AI model selection, report language, auto-generate toggle."""
-
-    def __init__(self, svc: SettingsService, parent=None):
-        super().__init__(parent)
-        self._svc = svc
-        self.setStyleSheet("background: transparent;")
-        self._build()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
+    def _build_ai_section(self):
         card = _section_card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(24, 20, 24, 24)
-        cl.setSpacing(16)
+        cl.setSpacing(14)
 
         cl.addWidget(_section_title("🤖  AI & Reports"))
         cl.addWidget(_divider())
 
-        self.model = QComboBox()
-        models = [
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            "claude-haiku-4-5-20251001",
-        ]
-        for m in models:
-            self.model.addItem(m)
-        self.model.setCurrentText(self._svc.get("ai_model"))
-        cl.addLayout(_field_row(
-            "AI Model",
-            self.model,
-            "Model used to generate inventory analysis reports"
+        self.ai_model = QComboBox()
+        for m in ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-5-20251001"]:
+            self.ai_model.addItem(m)
+        self.ai_model.setCurrentText(self._svc.get("ai_model"))
+        cl.addLayout(_field_row("AI Model", self.ai_model, "Model used to generate inventory analysis reports"))
+
+        self.report_lang = QComboBox()
+        for lang in ["English", "Filipino", "Spanish", "Japanese", "French"]:
+            self.report_lang.addItem(lang)
+        self.report_lang.setCurrentText(self._svc.get("report_language"))
+        cl.addLayout(_field_row("Report Language", self.report_lang))
+
+        self.ai_auto_gen = QCheckBox()
+        self.ai_auto_gen.setChecked(bool(self._svc.get("ai_report_auto_generate")))
+        cl.addLayout(_toggle_row(
+            "Auto-Generate Report After Analysis",
+            self.ai_auto_gen,
+            "Automatically run the AI report after each sales analysis refresh"
         ))
 
-        self.language = QComboBox()
-        for lang in ["English", "Filipino", "Spanish", "Japanese", "French"]:
-            self.language.addItem(lang)
-        self.language.setCurrentText(self._svc.get("report_language"))
-        cl.addLayout(_field_row("Report Language", self.language))
-
-        self.auto_gen = QCheckBox("Auto-generate report after each sales analysis refresh")
-        self.auto_gen.setChecked(bool(self._svc.get("ai_report_auto_generate")))
-        cl.addWidget(self.auto_gen)
-
-        # Info pill
         info = QLabel("ℹ️  Reports are generated using the Anthropic API. An internet connection is required.")
         info.setWordWrap(True)
         info.setStyleSheet("""
@@ -374,43 +402,94 @@ class _AIPanel(QWidget):
         """)
         cl.addWidget(info)
 
-        layout.addWidget(card)
-        layout.addStretch()
+        self._cl.addWidget(card)
 
-    def collect(self) -> dict:
-        return {
-            "ai_model": self.model.currentText(),
-            "report_language": self.language.currentText(),
-            "ai_report_auto_generate": self.auto_gen.isChecked(),
-        }
-
-
-class _DataPanel(QWidget):
-    """Backup path, interval, enable toggle."""
-
-    def __init__(self, svc: SettingsService, parent=None):
-        super().__init__(parent)
-        self._svc = svc
-        self.setStyleSheet("background: transparent;")
-        self._build()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        # ── Backup card ───────────────────────────────────────────────────
+    def _build_account_section(self):
         card = _section_card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(24, 20, 24, 24)
-        cl.setSpacing(16)
+        cl.setSpacing(14)
+
+        cl.addWidget(_section_title("👤  Account"))
+        cl.addWidget(_divider())
+
+        # Avatar + name row
+        avatar_row = QHBoxLayout()
+        avatar_row.setSpacing(16)
+        avatar = QLabel("👤")
+        avatar.setFixedSize(60, 60)
+        avatar.setAlignment(Qt.AlignCenter)
+        avatar.setStyleSheet("""
+            font-size: 28px;
+            background-color: #eef2ff;
+            border-radius: 30px;
+            border: 2px solid #c7d2fe;
+        """)
+        avatar_row.addWidget(avatar)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(4)
+        uname = QLabel(self._svc.get("admin_username"))
+        uname.setStyleSheet("font-size: 15px; font-weight: 700; color: #111827;")
+        info_col.addWidget(uname)
+        email_lbl = QLabel(self._svc.get("admin_email"))
+        email_lbl.setStyleSheet("font-size: 12px; color: #6b7280;")
+        info_col.addWidget(email_lbl)
+        role = QLabel("🔑 Administrator")
+        role.setFixedWidth(130)
+        role.setStyleSheet("""
+            background-color: #eef2ff; color: #4338ca;
+            font-size: 11px; font-weight: 700;
+            border-radius: 12px; padding: 3px 12px;
+        """)
+        info_col.addWidget(role)
+        avatar_row.addLayout(info_col)
+        avatar_row.addStretch()
+        cl.addLayout(avatar_row)
+
+        cl.addWidget(_divider())
+        cl.addWidget(_section_title("🔒  Change Password"))
+
+        self.current_pw = QLineEdit()
+        self.current_pw.setPlaceholderText("Current password")
+        self.current_pw.setEchoMode(QLineEdit.Password)
+        cl.addLayout(_field_row("Current Password", self.current_pw))
+
+        self.new_pw = QLineEdit()
+        self.new_pw.setPlaceholderText("New password (min. 8 characters)")
+        self.new_pw.setEchoMode(QLineEdit.Password)
+        cl.addLayout(_field_row("New Password", self.new_pw))
+
+        self.confirm_pw = QLineEdit()
+        self.confirm_pw.setPlaceholderText("Confirm new password")
+        self.confirm_pw.setEchoMode(QLineEdit.Password)
+        cl.addLayout(_field_row("Confirm Password", self.confirm_pw))
+
+        pw_btn = QPushButton("Update Password")
+        pw_btn.setCursor(Qt.PointingHandCursor)
+        pw_btn.setStyleSheet(_SAVE_BTN_STYLE)
+        pw_btn.clicked.connect(self._change_password)
+        cl.addWidget(pw_btn, 0, Qt.AlignLeft)
+
+        self._cl.addWidget(card)
+
+    def _build_data_section(self):
+        # Backup card
+        card = _section_card()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(24, 20, 24, 24)
+        cl.setSpacing(14)
 
         cl.addWidget(_section_title("💾  Backup & Export"))
         cl.addWidget(_divider())
 
-        self.backup_enabled = QCheckBox("Enable automatic database backups")
+        self.backup_enabled = QCheckBox()
         self.backup_enabled.setChecked(bool(self._svc.get("backup_enabled")))
-        cl.addWidget(self.backup_enabled)
+        cl.addLayout(_toggle_row(
+            "Enable Automatic Backups",
+            self.backup_enabled,
+            "Periodically save a backup copy of the database"
+        ))
 
         self.backup_interval = QSpinBox()
         self.backup_interval.setRange(1, 365)
@@ -418,44 +497,37 @@ class _DataPanel(QWidget):
         self.backup_interval.setValue(int(self._svc.get("backup_interval_days")))
         cl.addLayout(_field_row("Backup Every", self.backup_interval))
 
-        path_row = QHBoxLayout()
-        path_row.setSpacing(8)
+        # Backup folder path row
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(8)
         self.backup_path = QLineEdit(self._svc.get("backup_path") or "")
         self.backup_path.setPlaceholderText("Select backup folder…")
         self.backup_path.setReadOnly(True)
-        path_row.addWidget(self.backup_path, 1)
-
+        folder_row.addWidget(self.backup_path, 1)
         browse_btn = QPushButton("Browse…")
         browse_btn.setCursor(Qt.PointingHandCursor)
         browse_btn.setStyleSheet(_SECONDARY_BTN_STYLE)
-        browse_btn.clicked.connect(self._browse)
-        path_row.addWidget(browse_btn)
+        browse_btn.clicked.connect(self._browse_folder)
+        folder_row.addWidget(browse_btn)
 
-        cl.addLayout(_field_row("Backup Folder", QWidget()))   # placeholder spacer
-        # Replace the last added layout with the real path row
-        # (remove placeholder widget added above)
-        item = cl.takeAt(cl.count() - 1)
-        if item and item.widget():
-            item.widget().deleteLater()
+        folder_label_col = QVBoxLayout()
+        folder_label_col.setSpacing(2)
+        fl = QLabel("Backup Folder")
+        fl.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
+        folder_label_col.addWidget(fl)
+        fh = QLabel("Where backup files will be saved")
+        fh.setStyleSheet("font-size: 11px; color: #9ca3af;")
+        folder_label_col.addWidget(fh)
 
-        path_label_col = QVBoxLayout()
-        path_label_col.setSpacing(2)
-        pl = QLabel("Backup Folder")
-        pl.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
-        path_label_col.addWidget(pl)
-        ph = QLabel("Where backup files will be saved")
-        ph.setStyleSheet("font-size: 11px; color: #9ca3af;")
-        path_label_col.addWidget(ph)
+        full_row = QHBoxLayout()
+        full_row.setSpacing(16)
+        full_row.addLayout(folder_label_col, 1)
+        full_row.addLayout(folder_row, 2)
+        cl.addLayout(full_row)
 
-        full_path_row = QHBoxLayout()
-        full_path_row.setSpacing(16)
-        full_path_row.addLayout(path_label_col, 1)
-        full_path_row.addLayout(path_row, 2)
-        cl.addLayout(full_path_row)
+        self._cl.addWidget(card)
 
-        layout.addWidget(card)
-
-        # ── Danger zone card ──────────────────────────────────────────────
+        # Danger zone card
         danger_card = _section_card()
         danger_card.setStyleSheet(_CARD_STYLE + """
             QFrame#sectionCard { border-color: #fca5a5; }
@@ -475,117 +547,56 @@ class _DataPanel(QWidget):
         rl = QLabel("Reset All Settings")
         rl.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
         reset_col.addWidget(rl)
-        rh = QLabel("Restore every setting to its factory default value")
+        rh = QLabel("Restore every setting to its factory default value — cannot be undone")
         rh.setStyleSheet("font-size: 11px; color: #9ca3af;")
         reset_col.addWidget(rh)
         reset_row.addLayout(reset_col, 1)
 
-        self.reset_btn = QPushButton("Reset to Defaults")
-        self.reset_btn.setCursor(Qt.PointingHandCursor)
-        self.reset_btn.setStyleSheet(_DANGER_BTN_STYLE)
-        reset_row.addWidget(self.reset_btn, 0, Qt.AlignRight)
+        reset_btn = QPushButton("Reset to Defaults")
+        reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.setStyleSheet(_DANGER_BTN_STYLE)
+        reset_btn.clicked.connect(self._reset_all)
+        reset_row.addWidget(reset_btn, 0, Qt.AlignRight)
         dl.addLayout(reset_row)
 
-        layout.addWidget(danger_card)
-        layout.addStretch()
+        self._cl.addWidget(danger_card)
 
-    def _browse(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Backup Folder")
-        if folder:
-            self.backup_path.setText(folder)
+    # ------------------------------------------------------------------ #
+    #  Actions                                                             #
+    # ------------------------------------------------------------------ #
 
-    def collect(self) -> dict:
-        return {
-            "backup_enabled": self.backup_enabled.isChecked(),
-            "backup_interval_days": self.backup_interval.value(),
-            "backup_path": self.backup_path.text(),
+    def _save_all(self):
+        """Collect every widget value and persist in one write."""
+        updates = {
+            # General
+            "store_name":               self.store_name.text().strip(),
+            "store_currency":           self.currency.currentText(),
+            "store_timezone":           self.timezone.currentText(),
+            "date_format":              self.date_fmt.currentText(),
+            # Inventory
+            "low_stock_threshold":      self.threshold.value(),
+            "barcode_format":           self.barcode_fmt.currentText(),
+            "auto_restock_alerts":      self.auto_alerts.isChecked(),
+            # Notifications
+            "notify_low_stock":         self.notify_low_stock.isChecked(),
+            "notify_new_sales":         self.notify_new_sales.isChecked(),
+            "notify_restock_forecast":  self.notify_restock.isChecked(),
+            # AI
+            "ai_model":                 self.ai_model.currentText(),
+            "report_language":          self.report_lang.currentText(),
+            "ai_report_auto_generate":  self.ai_auto_gen.isChecked(),
+            # Data
+            "backup_enabled":           self.backup_enabled.isChecked(),
+            "backup_interval_days":     self.backup_interval.value(),
+            "backup_path":              self.backup_path.text(),
         }
-
-
-class _AccountPanel(QWidget):
-    """Display current account info; password change flow."""
-
-    def __init__(self, svc: SettingsService, parent=None):
-        super().__init__(parent)
-        self._svc = svc
-        self.setStyleSheet("background: transparent;")
-        self._build()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        card = _section_card()
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(24, 20, 24, 24)
-        cl.setSpacing(16)
-
-        cl.addWidget(_section_title("👤  Account"))
-        cl.addWidget(_divider())
-
-        # Avatar placeholder
-        avatar_row = QHBoxLayout()
-        avatar = QLabel("👤")
-        avatar.setFixedSize(64, 64)
-        avatar.setAlignment(Qt.AlignCenter)
-        avatar.setStyleSheet("""
-            font-size: 32px;
-            background-color: #eef2ff;
-            border-radius: 32px;
-            border: 2px solid #c7d2fe;
-        """)
-        avatar_row.addWidget(avatar)
-        name_col = QVBoxLayout()
-        name_col.setSpacing(4)
-        uname = QLabel(self._svc.get("admin_username"))
-        uname.setStyleSheet("font-size: 16px; font-weight: 700; color: #111827;")
-        name_col.addWidget(uname)
-        email = QLabel(self._svc.get("admin_email"))
-        email.setStyleSheet("font-size: 12px; color: #6b7280;")
-        name_col.addWidget(email)
-        role_pill = QLabel("🔑 Administrator")
-        role_pill.setStyleSheet("""
-            background-color: #eef2ff; color: #4338ca;
-            font-size: 11px; font-weight: 700;
-            border-radius: 12px; padding: 3px 12px;
-        """)
-        role_pill.setFixedWidth(130)
-        name_col.addWidget(role_pill)
-        avatar_row.addLayout(name_col)
-        avatar_row.addStretch()
-        cl.addLayout(avatar_row)
-        cl.addWidget(_divider())
-
-        cl.addWidget(_section_title("🔒  Change Password"))
-
-        self.current_pw = QLineEdit()
-        self.current_pw.setPlaceholderText("Current password")
-        self.current_pw.setEchoMode(QLineEdit.Password)
-        cl.addLayout(_field_row("Current Password", self.current_pw))
-
-        self.new_pw = QLineEdit()
-        self.new_pw.setPlaceholderText("New password (min. 8 characters)")
-        self.new_pw.setEchoMode(QLineEdit.Password)
-        cl.addLayout(_field_row("New Password", self.new_pw))
-
-        self.confirm_pw = QLineEdit()
-        self.confirm_pw.setPlaceholderText("Confirm new password")
-        self.confirm_pw.setEchoMode(QLineEdit.Password)
-        cl.addLayout(_field_row("Confirm Password", self.confirm_pw))
-
-        self.pw_btn = QPushButton("Update Password")
-        self.pw_btn.setCursor(Qt.PointingHandCursor)
-        self.pw_btn.setStyleSheet(_SAVE_BTN_STYLE)
-        self.pw_btn.clicked.connect(self._change_password)
-        cl.addWidget(self.pw_btn, 0, Qt.AlignLeft)
-
-        layout.addWidget(card)
-        layout.addStretch()
+        self._svc.set_many(updates)
+        self._show_toast("Settings saved ✓")
+        self.settings_saved.emit(updates)
 
     def _change_password(self):
         current = self.current_pw.text()
-        new = self.new_pw.text()
+        new     = self.new_pw.text()
         confirm = self.confirm_pw.text()
         if not current or not new or not confirm:
             QMessageBox.warning(self, "Validation", "All password fields are required.")
@@ -596,173 +607,16 @@ class _AccountPanel(QWidget):
         if len(new) < 8:
             QMessageBox.warning(self, "Validation", "New password must be at least 8 characters.")
             return
-        # Actual password update should go through auth_service / database;
-        # this UI emits a signal that the parent can connect to.
+        # Plug in auth_service / database hash update here as needed
         QMessageBox.information(self, "Password", "Password updated successfully!")
         self.current_pw.clear()
         self.new_pw.clear()
         self.confirm_pw.clear()
 
-    def collect(self) -> dict:
-        return {}   # Account changes are handled separately
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Main Settings Page
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SettingsPage(QWidget):
-    """
-    Full Settings page — drop it into the Dashboard's QStackedWidget at index 6.
-
-    Usage in Dashboard_UI.py:
-        from Settings_UI import SettingsPage
-        from settings_service import SettingsService
-
-        # Create once (e.g. in __init__):
-        self._settings_svc = SettingsService()
-        self.settings_page = SettingsPage(self._settings_svc)
-        self.content_stack.addWidget(self.settings_page)   # index 6
-    """
-
-    settings_saved = Signal(dict)   # emitted after every successful save
-
-    def __init__(self, svc: SettingsService = None, parent=None):
-        super().__init__(parent)
-        self._svc = svc or SettingsService()
-        self.setStyleSheet("background-color: #f9fafb;")
-        self._panels: list[QWidget] = []
-        self._build_ui()
-
-    # ------------------------------------------------------------------ #
-    #  UI construction                                                     #
-    # ------------------------------------------------------------------ #
-
-    def _build_ui(self):
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # ── Left nav ─────────────────────────────────────────────────────
-        nav_frame = QFrame()
-        nav_frame.setFixedWidth(200)
-        nav_frame.setStyleSheet("QFrame { background-color: #ffffff; border-right: 1px solid #e5e7eb; }")
-        nav_layout = QVBoxLayout(nav_frame)
-        nav_layout.setContentsMargins(0, 24, 0, 24)
-        nav_layout.setSpacing(4)
-
-        nav_title = QLabel("Settings")
-        nav_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #111827; padding: 0 18px 12px 18px;")
-        nav_layout.addWidget(nav_title)
-
-        self._nav_btns: list[QPushButton] = []
-        sections = [
-            ("🏪", "General"),
-            ("📦", "Inventory"),
-            ("🔔", "Notifications"),
-            ("🤖", "AI & Reports"),
-            ("💾", "Data & Backup"),
-            ("👤", "Account"),
-        ]
-        for icon, label in sections:
-            btn = QPushButton(f"  {icon}  {label}")
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setCheckable(True)
-            btn.setStyleSheet(self._nav_btn_style(False))
-            btn.clicked.connect(lambda _, i=len(self._nav_btns): self._switch_tab(i))
-            nav_layout.addWidget(btn)
-            self._nav_btns.append(btn)
-
-        nav_layout.addStretch()
-        root.addWidget(nav_frame)
-
-        # ── Content area ─────────────────────────────────────────────────
-        content_area = QWidget()
-        content_area.setStyleSheet("background-color: #f9fafb;")
-        content_vlayout = QVBoxLayout(content_area)
-        content_vlayout.setContentsMargins(0, 0, 0, 0)
-        content_vlayout.setSpacing(0)
-
-        # Header bar
-        header = QFrame()
-        header.setStyleSheet("QFrame { background-color: #ffffff; border-bottom: 1px solid #e5e7eb; } QLabel { border: none; }")
-        header.setFixedHeight(64)
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(28, 0, 28, 0)
-        self._header_title = QLabel("General")
-        self._header_title.setStyleSheet("font-size: 22px; font-weight: 700; color: #111827;")
-        hl.addWidget(self._header_title)
-        hl.addStretch()
-
-        self._save_btn = QPushButton("💾  Save Changes")
-        self._save_btn.setCursor(Qt.PointingHandCursor)
-        self._save_btn.setFixedHeight(40)
-        self._save_btn.setStyleSheet(_SAVE_BTN_STYLE)
-        self._save_btn.clicked.connect(self._save)
-        hl.addWidget(self._save_btn)
-
-        content_vlayout.addWidget(header)
-
-        # Scroll area for panel content
-        self._stack = QStackedWidget()
-        self._stack.setStyleSheet("background: transparent;")
-
-        # Build panels
-        data_panel = _DataPanel(self._svc)
-        data_panel._reset_btn = data_panel.reset_btn  # alias for connection below
-        data_panel.reset_btn.clicked.connect(self._reset_all)
-
-        panels = [
-            _GeneralPanel(self._svc),
-            _InventoryPanel(self._svc),
-            _NotificationsPanel(self._svc),
-            _AIPanel(self._svc),
-            data_panel,
-            _AccountPanel(self._svc),
-        ]
-        self._panels = panels
-
-        for panel in panels:
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-            wrapper = QWidget()
-            wrapper.setStyleSheet("background: transparent;")
-            wl = QVBoxLayout(wrapper)
-            wl.setContentsMargins(28, 24, 28, 24)
-            wl.addWidget(panel)
-            scroll.setWidget(wrapper)
-            self._stack.addWidget(scroll)
-
-        content_vlayout.addWidget(self._stack, 1)
-        root.addWidget(content_area, 1)
-
-        self._switch_tab(0)
-
-    # ------------------------------------------------------------------ #
-    #  Interaction                                                         #
-    # ------------------------------------------------------------------ #
-
-    _TAB_LABELS = ["General", "Inventory", "Notifications", "AI & Reports", "Data & Backup", "Account"]
-
-    def _switch_tab(self, index: int):
-        self._stack.setCurrentIndex(index)
-        self._header_title.setText(self._TAB_LABELS[index])
-        # Hide Save button on Account tab (password handled separately)
-        self._save_btn.setVisible(index != 5)
-        for i, btn in enumerate(self._nav_btns):
-            btn.setChecked(i == index)
-            btn.setStyleSheet(self._nav_btn_style(i == index))
-
-    def _save(self):
-        updates: dict = {}
-        active_idx = self._stack.currentIndex()
-        panel = self._panels[active_idx]
-        if hasattr(panel, "collect"):
-            updates = panel.collect()
-        self._svc.set_many(updates)
-        self._show_toast("Settings saved ✓")
-        self.settings_saved.emit(updates)
+    def _browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Backup Folder")
+        if folder:
+            self.backup_path.setText(folder)
 
     def _reset_all(self):
         reply = QMessageBox.question(
@@ -773,60 +627,23 @@ class SettingsPage(QWidget):
         )
         if reply == QMessageBox.Yes:
             self._svc.reset_to_defaults()
-            QMessageBox.information(self, "Reset", "All settings have been reset to defaults. Please restart the application.")
+            QMessageBox.information(
+                self, "Reset",
+                "All settings have been reset to defaults.\nPlease restart the application."
+            )
 
     def _show_toast(self, message: str):
-        """Brief non-blocking status message in the header button."""
         original = self._save_btn.text()
         self._save_btn.setText(f"✅  {message}")
         self._save_btn.setEnabled(False)
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(1800, lambda: (
             self._save_btn.setText(original),
             self._save_btn.setEnabled(True),
         ))
 
-    # ------------------------------------------------------------------ #
-    #  Helpers                                                             #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _nav_btn_style(active: bool) -> str:
-        if active:
-            return """
-                QPushButton {
-                    text-align: left;
-                    padding: 10px 18px;
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #6366f1;
-                    background-color: #eef2ff;
-                    border: none;
-                    border-radius: 0;
-                    border-left: 3px solid #6366f1;
-                }
-            """
-        return """
-            QPushButton {
-                text-align: left;
-                padding: 10px 18px;
-                font-size: 13px;
-                font-weight: 500;
-                color: #6b7280;
-                background-color: transparent;
-                border: none;
-                border-radius: 0;
-                border-left: 3px solid transparent;
-            }
-            QPushButton:hover {
-                background-color: #f9fafb;
-                color: #111827;
-            }
-        """
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Standalone entry-point (for testing outside the main app)
+#  Standalone entry-point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -837,7 +654,7 @@ if __name__ == "__main__":
     svc = SettingsService()
     win = SettingsPage(svc)
     win.setWindowTitle("ProStock | Settings")
-    win.resize(1000, 700)
+    win.resize(1000, 720)
     win.show()
 
     sys.exit(app.exec())
