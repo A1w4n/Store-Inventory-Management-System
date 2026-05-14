@@ -1,48 +1,53 @@
 import time
 import cv2
 import numpy as np
-from deepface import DeepFace
+import insightface
+from insightface.app import FaceAnalysis
 from .local_auth_storage import LocalAuthStorage
-
-# DeepFace model to use — "Facenet" is fast and accurate; no dlib required
-MODEL_NAME = "Facenet"
-DETECTOR = "opencv"
 
 
 class FaceRecognitionAuth:
-    """Handles face registration and real-time face authentication using DeepFace."""
+    """Handles face registration and real-time face authentication using InsightFace.
+
+    InsightFace uses ONNX Runtime — no TensorFlow, no dlib, deploys cleanly on Render.
+    Embeddings are 512-d ArcFace vectors stored locally via LocalAuthStorage.
+    """
 
     def __init__(self, storage=None, tolerance=0.55):
         self.storage = storage or LocalAuthStorage()
-        # tolerance maps to a distance threshold (lower = stricter)
-        # Facenet cosine distance: 0.40 is roughly equivalent to face_recognition's 0.55
+        # Cosine similarity threshold — higher = stricter (0.0 to 1.0)
+        # 0.55 is a reasonable default; increase to 0.65 to be more strict
         self.tolerance = tolerance
+        self._app = None  # lazy-loaded on first use
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_embedding(self, rgb_frame):
-        """Return a 128-d face embedding from an RGB frame, or None if no face found."""
-        try:
-            result = DeepFace.represent(
-                img_path=rgb_frame,
-                model_name=MODEL_NAME,
-                detector_backend=DETECTOR,
-                enforce_detection=True,
+    def _get_app(self):
+        """Lazy-load the InsightFace model (downloads on first run, cached after)."""
+        if self._app is None:
+            self._app = FaceAnalysis(
+                name="buffalo_sc",   # lightweight model: detector + ArcFace recognizer
+                providers=["CPUExecutionProvider"],
             )
-            # result is a list of dicts; take the first detected face
-            if result:
-                return np.array(result[0]["embedding"])
+            self._app.prepare(ctx_id=0, det_size=(640, 640))
+        return self._app
+
+    def _get_embedding(self, bgr_frame):
+        """Return a 512-d ArcFace embedding from a BGR frame, or None if no face found."""
+        try:
+            app = self._get_app()
+            faces = app.get(bgr_frame)
+            if faces:
+                return faces[0].normed_embedding  # already L2-normalised
         except Exception:
             pass
         return None
 
-    def _cosine_distance(self, a, b):
-        """Cosine distance between two embedding vectors (0 = identical, 1 = orthogonal)."""
-        a = a / (np.linalg.norm(a) + 1e-10)
-        b = b / (np.linalg.norm(b) + 1e-10)
-        return float(1.0 - np.dot(a, b))
+    def _cosine_similarity(self, a, b):
+        """Cosine similarity (1.0 = identical, 0.0 = unrelated)."""
+        return float(np.dot(a, b))  # both vectors are already normalised
 
     # ------------------------------------------------------------------
     # Registration
@@ -64,8 +69,7 @@ class FaceRecognitionAuth:
             if not ret:
                 continue
 
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            embedding = self._get_embedding(rgb_frame)
+            embedding = self._get_embedding(frame)
             if embedding is not None:
                 samples.append(embedding)
 
@@ -88,9 +92,10 @@ class FaceRecognitionAuth:
         if not samples:
             return False, None, "No face detected during registration"
 
-        # Average the captured embeddings for a robust reference vector
-        avg_embedding = np.mean(samples, axis=0)
-        return True, avg_embedding, f"Captured {len(samples)} facial samples"
+        # Average embeddings and re-normalise for a robust reference vector
+        avg = np.mean(samples, axis=0)
+        avg = avg / (np.linalg.norm(avg) + 1e-10)
+        return True, avg, f"Captured {len(samples)} facial samples"
 
     def capture_and_register_face(self, username, sample_count=5, timeout_seconds=30):
         """Capture face samples and register the user in local storage."""
@@ -123,32 +128,27 @@ class FaceRecognitionAuth:
 
         start_time = time.time()
         best_match = None
-        best_distance = float("inf")
-
-        # Scale tolerance: face_recognition uses Euclidean ~0.55;
-        # map to cosine distance by dividing by ~2.5 (empirical approximation)
-        cosine_threshold = self.tolerance / 2.5
+        best_similarity = -1.0
 
         while time.time() - start_time < timeout_seconds:
             ret, frame = cap.read()
             if not ret:
                 continue
 
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            embedding = self._get_embedding(rgb_frame)
+            embedding = self._get_embedding(frame)
 
             if embedding is not None:
-                distances = [
-                    self._cosine_distance(embedding, known) for known in known_encodings
+                similarities = [
+                    self._cosine_similarity(embedding, known) for known in known_encodings
                 ]
-                min_index = int(np.argmin(distances))
-                min_dist = distances[min_index]
+                max_index = int(np.argmax(similarities))
+                max_sim = similarities[max_index]
 
-                if min_dist < best_distance:
-                    best_distance = min_dist
-                    best_match = user_names[min_index]
+                if max_sim > best_similarity:
+                    best_similarity = max_sim
+                    best_match = user_names[max_index]
 
-                if best_distance <= cosine_threshold:
+                if best_similarity >= self.tolerance:
                     cap.release()
                     cv2.destroyAllWindows()
                     self.storage.log_auth_attempt(best_match, "face_recognition", True)
@@ -180,5 +180,5 @@ class FaceRecognitionAuth:
     # ------------------------------------------------------------------
 
     def set_tolerance(self, tolerance):
-        """Adjust the face distance tolerance for matching."""
+        """Adjust the cosine similarity threshold (higher = stricter match required)."""
         self.tolerance = tolerance

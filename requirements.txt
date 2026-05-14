@@ -6,7 +6,8 @@ gunicorn
 requests>=2.31.0
 PySide6>=6.4.0
 opencv-python>=4.8.0
-deepface==0.0.93
+insightface>=0.7.3
+onnxruntime>=1.16.0
 pyzbar>=0.1.9
 qrcode>=7.4.2
 numpy>=1.24.0
