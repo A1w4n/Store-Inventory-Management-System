@@ -581,6 +581,25 @@ class SQLiteDatabase:
             'units_sold_today': units_sold_today
         }
 
+    def get_items_added_per_day(self, days=7):
+        """Get items added per day for the last days."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        cursor.execute("""
+            SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as count
+            FROM items
+            WHERE created_at >= ?
+            GROUP BY strftime('%Y-%m-%d', created_at)
+            ORDER BY date ASC
+        """, (cutoff_date,))
+        rows = cursor.fetchall()
+        result = {}
+        for row in rows:
+            result[row[0]] = row[1]
+        self.disconnect()
+        return result
+
     def get_saleability_increase(self, days=7):
         """Get saleability increase trend for best seller."""
         conn = self.connect()
@@ -614,107 +633,38 @@ class SQLiteDatabase:
     
     # Additional methods for inventory movements, sales history, etc. can be added here as needed.
 
-    def __init__(self, db_path="inventory.db"):
-        import sqlite3
-        self.conn = sqlite3.connect(db_path)
-        self.cur = self.conn.cursor()
-
-    # ✅ Ensure table exists with given columns
     def create_table_if_not_exists(self, table_name, columns):
+        """Create table if it doesn't exist with given columns."""
+        conn = self.connect()
+        cursor = conn.cursor()
         col_defs = ", ".join([f"{col} TEXT" for col in columns])
-        self.cur.execute(f"""
+        cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 {col_defs}
             )
         """)
-        self.conn.commit()
+        conn.commit()
+        self.disconnect()
 
-    # ✅ Clear all rows from a table
     def clear_table(self, table_name):
-        self.cur.execute(f"DELETE FROM {table_name}")
-        self.conn.commit()
-
-    # ✅ Insert multiple rows at once
-    def bulk_insert(self, table_name, columns, rows):
-        placeholders = ", ".join(["?" for _ in columns])
-        self.cur.executemany(
-            f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})",
-            rows
-        )
-        self.conn.commit()
-
-    def __init__(self, db_path="inventory.db"):
-        import sqlite3
-        self.conn = sqlite3.connect(db_path)
-        self.cur = self.conn.cursor()
-
-    # ✅ Ensure table exists with correct schema
-    def create_table_if_not_exists(self, table_name, columns):
-        if table_name == "items":
-            self.cur.execute("""
-                CREATE TABLE IF NOT EXISTS items (
-                    id TEXT PRIMARY KEY,
-                    name TEXT,
-                    quantity INTEGER,
-                    created_at TIMESTAMP
-                )
-            """)
-        elif table_name == "transactions":
-            self.cur.execute("""
-                CREATE TABLE IF NOT EXISTS transactions (
-                    id TEXT PRIMARY KEY,
-                    item_id TEXT,
-                    change INTEGER,
-                    timestamp TIMESTAMP
-                )
-            """)
-        elif table_name == "users":
-            self.cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id TEXT PRIMARY KEY,
-                    username TEXT,
-                    role TEXT,
-                    created_at TIMESTAMP
-                )
-            """)
-        self.conn.commit()
-
-    # ✅ Clear all rows from a table
-    def clear_table(self, table_name):
-        self.cur.execute(f"DELETE FROM {table_name}")
-        self.conn.commit()
-
-    # ✅ Insert multiple rows at once
-    def bulk_insert(self, table_name, columns, rows):
-        placeholders = ", ".join(["?" for _ in columns])
-        self.cur.executemany(
-            f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})",
-            rows
-        )
-        self.conn.commit()    
-
-    def __init__(self, backend="sqlite", db_path="inventory.db", pg_url=None):
-        self.backend = backend
-        self.db_path = db_path
-        self.pg_url = pg_url
-
-    def connect(self):
-        if self.backend == "sqlite":
-            return sqlite3.connect(self.db_path)
-        elif self.backend == "postgres":
-            return psycopg2.connect(self.pg_url)
-        else:
-            raise ValueError(f"Unsupported backend: {self.backend}")
-
-    def get_user_by_username(self, username):
+        """Clear all rows from a table."""
         conn = self.connect()
         cursor = conn.cursor()
-        if self.backend == "sqlite":
-            cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-        else:  # PostgreSQL uses %s placeholders
-            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
-        return cursor.fetchone()    
+        cursor.execute(f"DELETE FROM {table_name}")
+        conn.commit()
+        self.disconnect()
 
+    def bulk_insert(self, table_name, columns, rows):
+        """Bulk insert rows into table."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        placeholders = ", ".join(["?" for _ in columns])
+        cursor.executemany(
+            f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})",
+            rows
+        )
+        conn.commit()
+        self.disconnect()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # POSTGRESQL IMPLEMENTATION

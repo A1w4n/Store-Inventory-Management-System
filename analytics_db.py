@@ -15,20 +15,34 @@ class AnalyticsDB:
         self.db = db
 
     def _q(self, sql, params=()):
-        import psycopg2.extras
-        sql = sql.replace("?", "%s")
         with self.db.get_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor.execute(sql, params)
-            return cursor.fetchall()
+            if hasattr(conn, 'cursor_factory'):
+                import psycopg2.extras
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                exec_sql = sql
+            else:
+                cursor = conn.cursor()
+                exec_sql = sql.replace("%s", "?")
+            cursor.execute(exec_sql, params)
+            rows = cursor.fetchall()
+            if hasattr(conn, 'cursor_factory'):
+                return rows
+            return [dict(row) for row in rows]
 
     def _q1(self, sql, params=()):
-        import psycopg2.extras
-        sql = sql.replace("?", "%s")
         with self.db.get_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor.execute(sql, params)
-            return cursor.fetchone()
+            if hasattr(conn, 'cursor_factory'):
+                import psycopg2.extras
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                exec_sql = sql
+            else:
+                cursor = conn.cursor()
+                exec_sql = sql.replace("%s", "?")
+            cursor.execute(exec_sql, params)
+            row = cursor.fetchone()
+            if hasattr(conn, 'cursor_factory'):
+                return row
+            return dict(row) if row else None
 
     # ── Revenue / sales ──────────────────────────────────────
 

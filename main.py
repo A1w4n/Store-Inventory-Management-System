@@ -1,51 +1,57 @@
 from dotenv import load_dotenv
-from cloud_sync import CloudSync
 import os
 import sys
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Signal
+
 from auth_service import AuthService
 from Login_UI import LoginWindow as UI_Base
 from Dashboard_UI import InventoryDashboard
-from database import InventoryDatabase
-from web_server import start_server 
+from web_server import start_server
+
+# ── NEW: offline-first sync ────────────────────────────────────────────────
+from sync_engine import SyncEngine, SyncStatus
+from synced_database import SyncedDatabase
+# ──────────────────────────────────────────────────────────────────────────
 
 # Load environment variables from .env
 load_dotenv()
 
-# Run sync before launching app
-sync = CloudSync()
-sync.sync_all()
+DATABASE_URL = os.getenv("DATABASE_URL")        # Neon postgres connection string
+CLOUD_URL    = os.getenv("CLOUD_URL", "")       # e.g. https://your-app.onrender.com
+WEB_PORT     = 5000
 
-# Fetch variables
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# For local SQLite
-db = InventoryDatabase(backend="sqlite", db_path="inventory.db")
-
-# For PostgreSQL (if DATABASE_URL is set)
-db = InventoryDatabase(
-    backend="postgres",
-    pg_url="postgresql://neondb_owner:npg_UAfxw7k9KFaP@ep-broad-water-aov46oze-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+# ── 1. Create the sync engine ──────────────────────────────────────────────
+#    It manages the local SQLite cache AND background push/pull to the cloud.
+#    CLOUD_URL  → your Render web service URL
+#    DATABASE_URL → your Neon PostgreSQL connection string (used by web_server
+#                   on Render; the desktop never connects to Neon directly)
+engine = SyncEngine(
+    local_db_path="inventory.db",
+    cloud_url=CLOUD_URL,
+    on_status_change=lambda status: print(f"[Sync] Status → {status}"),
+    on_sync_complete=lambda summary: print(
+        f"[Sync] Done — pushed={summary['pushed']}, pulled={summary['pulled']}, at={summary['ts']}"
+    ),
 )
 
-# ── Pass db into your services ─────────────────────────
+# ── 2. Create the database (offline-first, wraps SQLite + queues writes) ───
+#    Drop-in replacement for PostgreSQLDatabase() — same API, works offline.
+db = SyncedDatabase(engine, db_path="inventory.db")
+
+# ── 3. Start the engine AFTER the db is ready ──────────────────────────────
+#    This kicks off the 30-second background sync loop.
+#    First sync happens immediately: pushes any queued offline writes, then
+#    pulls the latest cloud data into local SQLite.
+engine.start()
+
+# ── 4. Auth service uses the same db (unchanged) ──────────────────────────
 backend = AuthService(db)
 
-if DATABASE_URL:
-    try:
-        import psycopg2
-        connection = psycopg2.connect(DATABASE_URL)
-        print("Database connected successfully!")
-    except ImportError:
-        print("[WARNING] psycopg2 not installed, skipping PostgreSQL connectivity test.")
-    except Exception as e:
-        print(f"Error connecting to database: {e}")
-else:
-    print("[INFO] DATABASE_URL not set, skipping PostgreSQL connectivity test.")
 
-WEB_PORT = 5000
-
+# ─────────────────────────────────────────────────────────────────────────────
+#  LoginWindow — unchanged from your original
+# ─────────────────────────────────────────────────────────────────────────────
 
 class LoginWindow(UI_Base):
     login_success_signal = Signal(str)
@@ -101,11 +107,15 @@ class LoginWindow(UI_Base):
         """)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  AppController — unchanged from your original
+# ─────────────────────────────────────────────────────────────────────────────
+
 class AppController:
-    def __init__(self, auth_service: AuthService, db: InventoryDatabase):
+    def __init__(self, auth_service: AuthService, db: SyncedDatabase):
         self.auth_service = auth_service
         self.db = db
-        self.login_window = LoginWindow(auth_service)
+        self.login_window     = LoginWindow(auth_service)
         self.dashboard_window = InventoryDashboard(db)
 
         self.login_window.login_success_signal.connect(self.show_dashboard)
@@ -119,16 +129,21 @@ class AppController:
         self.dashboard_window.close()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    db      = InventoryDatabase()
-    backend = AuthService(db)
-
-    # Start the staff web portal in a background daemon thread
+    # Start the staff web portal (serves the web UI + the new sync API endpoints)
     start_server(host="0.0.0.0", port=WEB_PORT, db_path="inventory.db")
     print(f"[Staff Portal] Open http://localhost:{WEB_PORT} in any browser on this network")
 
     controller = AppController(backend, db)
-    sys.exit(app.exec())
+
+    # Clean shutdown — stop the sync thread when Qt exits
+    exit_code = app.exec()
+    engine.stop()
+    sys.exit(exit_code)
