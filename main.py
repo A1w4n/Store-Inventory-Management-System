@@ -118,6 +118,8 @@ class AppController:
         self.login_window     = LoginWindow(auth_service)
         self.dashboard_window = InventoryDashboard(db)
 
+        self.db.set_change_listener(self.dashboard_window.on_data_changed)
+
         self.login_window.login_success_signal.connect(self.show_dashboard)
         self.login_window.show()
 
@@ -138,7 +140,7 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
 
     # Start the staff web portal (serves the web UI + the new sync API endpoints)
-    start_server(host="0.0.0.0", port=WEB_PORT, db_path="inventory.db")
+    start_server(host="0.0.0.0", port=WEB_PORT, db_path="inventory.db", db=db)
     print(f"[Staff Portal] Open http://localhost:{WEB_PORT} in any browser on this network")
 
     controller = AppController(backend, db)

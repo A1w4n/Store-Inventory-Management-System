@@ -32,6 +32,18 @@ class SyncedDatabase(SQLiteDatabase):
     def __init__(self, sync_engine: SyncEngine, db_path: str = "inventory.db"):
         super().__init__(db_path=db_path)
         self._engine = sync_engine
+        self._on_change = None
+
+    def set_change_listener(self, callback):
+        """Set a callback that runs after any successful local write."""
+        self._on_change = callback
+
+    def _notify_change(self):
+        if callable(self._on_change):
+            try:
+                self._on_change()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ #
     #  Users                                                               #
@@ -47,6 +59,7 @@ class SyncedDatabase(SQLiteDatabase):
                 # Never send raw passwords to the cloud — send the hash only.
                 "password_hash": self._hash_password(password),
             })
+            self._notify_change()
         return result
 
     # ------------------------------------------------------------------ #
@@ -61,6 +74,7 @@ class SyncedDatabase(SQLiteDatabase):
                 "name": name,
                 "description": description,
             })
+            self._notify_change()
         return result
 
     # ------------------------------------------------------------------ #
@@ -80,18 +94,21 @@ class SyncedDatabase(SQLiteDatabase):
                 "sku": sku, "description": description, "quantity": quantity,
                 "low_stock_threshold": low_stock_threshold, "image_path": image_path,
             })
+            self._notify_change()
         return result
 
     def update_item(self, item_id, **kwargs):
         result = super().update_item(item_id, **kwargs)
         if result:
             self._engine.enqueue("items", "UPDATE", {"id": item_id, **kwargs})
+            self._notify_change()
         return result
 
     def delete_item(self, item_id):
         result = super().delete_item(item_id)
         if result:
             self._engine.enqueue("items", "DELETE", {"id": item_id})
+            self._notify_change()
         return result
 
     # ------------------------------------------------------------------ #
@@ -111,6 +128,7 @@ class SyncedDatabase(SQLiteDatabase):
                 "user_id": user_id,
                 "notes": notes,
             })
+            self._notify_change()
         return result
 
     # ------------------------------------------------------------------ #
@@ -126,4 +144,5 @@ class SyncedDatabase(SQLiteDatabase):
                 "user_id": user_id,
                 "sale_price": sale_price,
             })
+            self._notify_change()
         return result

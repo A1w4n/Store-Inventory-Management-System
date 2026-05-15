@@ -40,6 +40,8 @@ class FaceRecognitionThread(QThread):
 
 
 class LoginWindow(QWidget):
+    login_success_signal = Signal(str)
+
     def __init__(self, auth_service=None):
         super().__init__()
         self.auth_service = auth_service
@@ -417,6 +419,7 @@ class LoginWindow(QWidget):
         return username, ok
 
     def _on_login_success(self, username):
+        self.login_success_signal.emit(username)
         self.close()
 
     def _show_error(self, message, label):

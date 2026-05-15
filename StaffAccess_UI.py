@@ -1,12 +1,14 @@
 import sys
 import socket
 import qrcode
+import requests
+from datetime import datetime
 from io import BytesIO
 from PIL import Image as PILImage
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QFrame, QPushButton, QScrollArea, QLineEdit
+    QLabel, QFrame, QPushButton, QScrollArea, QLineEdit, QTimer
 )
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QFont, QImage
@@ -72,7 +74,12 @@ class StaffAccessPage(QWidget):
         super().__init__(parent)
         self.port = port
         self.setStyleSheet("background-color: #f9fafb;")
+        self.active_staff_list = []
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self._load_active_staff)
         self._build_ui()
+        self._load_active_staff()
+        self.refresh_timer.start(3000)  # Refresh every 3 seconds
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -122,6 +129,7 @@ class StaffAccessPage(QWidget):
         top_row.addWidget(self._build_info_card(), 1)
         inner_layout.addLayout(top_row)
         inner_layout.addWidget(self._build_instructions_card())
+        inner_layout.addWidget(self._build_active_staff_card())
         inner_layout.addStretch()
 
     def _build_qr_card(self) -> QFrame:
@@ -310,6 +318,96 @@ class StaffAccessPage(QWidget):
 
     def _copy_url(self):
         QApplication.clipboard().setText(self.url_field.text())
+
+    def _build_active_staff_card(self) -> QFrame:
+        """Build a card showing currently active staff accessing the portal."""
+        card = _SectionCard()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(28, 24, 28, 28)
+        layout.setSpacing(14)
+
+        title = QLabel("👥  Active Staff Portal Sessions")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #111827;")
+        layout.addWidget(title)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setStyleSheet("background-color: #f3f4f6; max-height: 1px;")
+        layout.addWidget(divider)
+
+        self.staff_list_container = QVBoxLayout()
+        self.staff_list_container.setSpacing(8)
+        self._populate_staff_list()
+        layout.addLayout(self.staff_list_container)
+
+        layout.addStretch()
+        return card
+
+    def _populate_staff_list(self):
+        """Populate the staff list with current active staff."""
+        # Clear existing widgets
+        while self.staff_list_container.count():
+            item = self.staff_list_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self.active_staff_list:
+            empty_label = QLabel("No staff currently accessing the portal")
+            empty_label.setStyleSheet("font-size: 13px; color: #9ca3af; padding: 12px;")
+            self.staff_list_container.addWidget(empty_label)
+            return
+
+        for staff in self.active_staff_list:
+            staff_frame = QFrame()
+            staff_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #f9fafb;
+                    border-radius: 8px;
+                    border: 1px solid #e5e7eb;
+                    padding: 12px;
+                }
+                QLabel { border: none; }
+            """)
+            staff_layout = QHBoxLayout(staff_frame)
+            staff_layout.setContentsMargins(12, 8, 12, 8)
+            staff_layout.setSpacing(12)
+
+            # Staff icon
+            icon_label = QLabel("👤")
+            icon_label.setStyleSheet("font-size: 18px;")
+            staff_layout.addWidget(icon_label, 0)
+
+            # Staff name
+            name_label = QLabel(staff.get("name", "Unknown"))
+            name_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #111827;")
+            staff_layout.addWidget(name_label, 1)
+
+            # Login time
+            login_time_str = staff.get("login_time", "")
+            try:
+                login_dt = datetime.fromisoformat(login_time_str)
+                time_str = login_dt.strftime("%H:%M:%S")
+            except:
+                time_str = "unknown"
+            
+            time_label = QLabel(f"Logged in at {time_str}")
+            time_label.setStyleSheet("font-size: 11px; color: #6b7280;")
+            staff_layout.addWidget(time_label, 0)
+
+            self.staff_list_container.addWidget(staff_frame)
+
+    def _load_active_staff(self):
+        """Load active staff from the server."""
+        try:
+            url = f"http://localhost:{self.port}/api/staff/active"
+            response = requests.get(url, timeout=2)
+            data = response.json()
+            
+            if data.get("ok"):
+                self.active_staff_list = data.get("active_staff", [])
+                self._populate_staff_list()
+        except Exception as e:
+            pass  # Silently fail if server is not responding
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -26,11 +26,21 @@
 
 import os
 import threading
+import uuid
+from datetime import datetime
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Active Staff Tracking
+# ─────────────────────────────────────────────────────────────────────────────
+
+_active_staff = {}  # { session_id: { "name": str, "login_time": datetime } }
+_staff_lock = threading.Lock()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Database — NeonDatabase on Render, SQLiteDatabase locally
@@ -105,6 +115,54 @@ def api_items():
         return jsonify(items)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Staff Portal Authentication
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/staff/login", methods=["POST"])
+def staff_login():
+    data = request.get_json(force=True)
+    staff_name = (data.get("staff_name") or "Staff").strip() or "Staff"
+    
+    session_id = str(uuid.uuid4())
+    with _staff_lock:
+        _active_staff[session_id] = {
+            "name": staff_name,
+            "login_time": datetime.now().isoformat()
+        }
+    
+    return jsonify({
+        "ok": True,
+        "staff_session_id": session_id,
+        "staff_name": staff_name
+    })
+
+
+@app.route("/api/staff/logout", methods=["POST"])
+def staff_logout():
+    data = request.get_json(force=True)
+    session_id = data.get("staff_session_id")
+    
+    if session_id:
+        with _staff_lock:
+            _active_staff.pop(session_id, None)
+    
+    return jsonify({"ok": True})
+
+
+@app.route("/api/staff/active", methods=["GET"])
+def get_active_staff():
+    with _staff_lock:
+        staff_list = [
+            {
+                "name": info["name"],
+                "login_time": info["login_time"]
+            }
+            for info in _active_staff.values()
+        ]
+    return jsonify({"ok": True, "active_staff": staff_list})
 
 
 @app.route("/api/purchase", methods=["POST"])
@@ -489,7 +547,10 @@ def _ensure_patched():
 #  Server start helpers (unchanged API)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def start_server(host="0.0.0.0", port=5000, db_path="inventory.db"):
+def start_server(host="0.0.0.0", port=5000, db_path="inventory.db", db=None):
+    global _db_instance
+    if db is not None:
+        _db_instance = db
     thread = threading.Thread(
         target=lambda: app.run(host=host, port=port, debug=False, use_reloader=False),
         daemon=True,

@@ -19,6 +19,8 @@ from StaffAccess_UI import StaffAccessPage
 from Settings_UI import SettingsPage
 from settings_service import SettingsService
 from database import InventoryDatabase
+from analytics_db import AnalyticsDB
+from charts import HBarChart
 
 class DashboardCard(QFrame):
     def __init__(self, title, content_widget=None):
@@ -210,6 +212,18 @@ class InventoryDashboard(QWidget):
         """)
         self._build_ui()
 
+    def on_data_changed(self):
+        """Handle database writes by refreshing dashboard stats and charts."""
+        self._refresh_all_stats()
+        self._update_chart()
+        self._populate_category_revenue_chart()
+        if hasattr(self, 'sales_analysis_page') and self.sales_analysis_page:
+            self.sales_analysis_page.refresh()
+        if hasattr(self, 'inventory_health_page') and self.inventory_health_page:
+            self.inventory_health_page.refresh()
+        if hasattr(self, 'analytics_page') and self.analytics_page:
+            self.analytics_page.refresh()
+
     def _build_ui(self):
         self.outer_layout = QHBoxLayout(self)
         self.outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -376,25 +390,18 @@ class InventoryDashboard(QWidget):
 
         self.stats_layout = stats
 
-        # Content Row (graph and quick actions)
+        # Content Row (graph and category revenue)
         graph = QHBoxLayout()
         graph.setSpacing(20)
         self.chart_widget = self._create_chart_widget()
         graph.addWidget(DashboardCard("Items Added & Stock", self.chart_widget), 2)
 
-        act = DashboardCard("Quick Actions")
-        act_l = QVBoxLayout()
-        for a in ["Print Barcodes", "Generate Cycle Count", "Export CSV"]:
-            b = QPushButton(a)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet("text-align: left; padding: 10px; color: #374151; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 5px;")
-            act_l.addWidget(b)
-
-        # Access the layout of the DashboardCard
-        container = QWidget()
-        container.setLayout(act_l)
-        act.layout().addWidget(container)
-        graph.addWidget(act, 1)
+        # Revenue by category chart
+        self.category_revenue_chart = HBarChart()
+        self.category_revenue_chart.setMinimumHeight(200)
+        cat_card = DashboardCard("Revenue by Category", self.category_revenue_chart)
+        self._populate_category_revenue_chart()
+        graph.addWidget(cat_card, 1)
 
         # Layout of the Dashboard card
         layout.addLayout(title)
@@ -616,6 +623,28 @@ class InventoryDashboard(QWidget):
         ax.grid(True, alpha=0.3)
         ax.tick_params(axis='y', labelsize=7)
         figure.tight_layout(pad=0.5)
+
+    def _populate_category_revenue_chart(self):
+        """Populate the revenue by category bar chart."""
+        try:
+            adb = AnalyticsDB(self.db)
+            cat_data = adb.revenue_by_category(self.date_range_days)
+            
+            if not cat_data:
+                self.category_revenue_chart.set_data(["No data"], [0])
+                return
+            
+            # Get top 5 categories by revenue
+            cat_data_sorted = sorted(cat_data, key=lambda x: x.get("rev", 0), reverse=True)[:5]
+            
+            labels = [c.get("name", "Unknown")[:15] for c in cat_data_sorted]
+            values = [float(c.get("rev", 0)) for c in cat_data_sorted]
+            colors = ["#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#f43f5e"][:len(labels)]
+            
+            self.category_revenue_chart.set_data(labels, values, colors)
+        except Exception as e:
+            print(f"[Dashboard] Error loading category revenue: {e}")
+            self.category_revenue_chart.set_data(["Error loading data"], [0])
 
 # Initialize UI
 if __name__ == "__main__":
