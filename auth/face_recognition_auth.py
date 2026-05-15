@@ -1,53 +1,78 @@
 import time
 import cv2
 import numpy as np
-import insightface
-from insightface.app import FaceAnalysis
 from .local_auth_storage import LocalAuthStorage
 
 
 class FaceRecognitionAuth:
-    """Handles face registration and real-time face authentication using InsightFace.
+    """Handles face registration and real-time face authentication using OpenCV.
 
-    InsightFace uses ONNX Runtime — no TensorFlow, no dlib, deploys cleanly on Render.
-    Embeddings are 512-d ArcFace vectors stored locally via LocalAuthStorage.
+    Uses OpenCV's Haar cascades for face detection and basic image comparison.
+    Face encodings are stored locally via LocalAuthStorage.
     """
 
-    def __init__(self, storage=None, tolerance=0.55):
+    def __init__(self, storage=None, tolerance=0.7):
         self.storage = storage or LocalAuthStorage()
-        # Cosine similarity threshold — higher = stricter (0.0 to 1.0)
-        # 0.55 is a reasonable default; increase to 0.65 to be more strict
+        # Similarity threshold — higher = stricter (0.0 to 1.0)
+        # 0.7 is a reasonable default; increase to 0.8 to be more strict
         self.tolerance = tolerance
-        self._app = None  # lazy-loaded on first use
+
+        # Load Haar cascade for face detection
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_app(self):
-        """Lazy-load the InsightFace model (downloads on first run, cached after)."""
-        if self._app is None:
-            self._app = FaceAnalysis(
-                name="buffalo_sc",   # lightweight model: detector + ArcFace recognizer
-                providers=["CPUExecutionProvider"],
-            )
-            self._app.prepare(ctx_id=0, det_size=(640, 640))
-        return self._app
-
-    def _get_embedding(self, bgr_frame):
-        """Return a 512-d ArcFace embedding from a BGR frame, or None if no face found."""
+    def _get_face_encoding(self, image):
+        """Return face encoding from image, or None if no face found."""
         try:
-            app = self._get_app()
-            faces = app.get(bgr_frame)
-            if faces:
-                return faces[0].normed_embedding  # already L2-normalised
-        except Exception:
-            pass
+            # Convert to grayscale for face detection
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            # Detect faces
+            faces = self.face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+
+            if len(faces) > 0:
+                # Use the largest face found
+                largest_face = max(faces, key=lambda f: f[2] * f[3])
+                x, y, w, h = largest_face
+
+                # Extract face region with some padding
+                padding = int(0.1 * max(w, h))
+                x1 = max(0, x - padding)
+                y1 = max(0, y - padding)
+                x2 = min(image.shape[1], x + w + padding)
+                y2 = min(image.shape[0], y + h + padding)
+
+                face_roi = image[y1:y2, x1:x2]
+                if face_roi.size == 0:
+                    return None
+
+                # Resize to fixed size for consistent encoding
+                face_resized = cv2.resize(face_roi, (100, 100))
+
+                # Convert to grayscale and flatten
+                face_gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
+                encoding = face_gray.flatten().astype(np.float32)
+                encoding = encoding / 255.0  # Normalize to 0-1
+
+                return encoding
+
+        except Exception as e:
+            print(f"Face encoding error: {e}")
         return None
 
     def _cosine_similarity(self, a, b):
-        """Cosine similarity (1.0 = identical, 0.0 = unrelated)."""
-        return float(np.dot(a, b))  # both vectors are already normalised
+        """Calculate cosine similarity between two vectors."""
+        dot_product = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        return dot_product / (norm_a * norm_b) if norm_a != 0 and norm_b != 0 else 0
 
     # ------------------------------------------------------------------
     # Registration
@@ -69,9 +94,9 @@ class FaceRecognitionAuth:
             if not ret:
                 continue
 
-            embedding = self._get_embedding(frame)
-            if embedding is not None:
-                samples.append(embedding)
+            encoding = self._get_face_encoding(frame)
+            if encoding is not None:
+                samples.append(encoding)
 
             cv2.putText(
                 frame,
@@ -92,10 +117,9 @@ class FaceRecognitionAuth:
         if not samples:
             return False, None, "No face detected during registration"
 
-        # Average embeddings and re-normalise for a robust reference vector
-        avg = np.mean(samples, axis=0)
-        avg = avg / (np.linalg.norm(avg) + 1e-10)
-        return True, avg, f"Captured {len(samples)} facial samples"
+        # Average encodings for a robust reference vector
+        avg_encoding = np.mean(samples, axis=0)
+        return True, avg_encoding, f"Captured {len(samples)} facial samples"
 
     def capture_and_register_face(self, username, sample_count=5, timeout_seconds=30):
         """Capture face samples and register the user in local storage."""
@@ -135,11 +159,11 @@ class FaceRecognitionAuth:
             if not ret:
                 continue
 
-            embedding = self._get_embedding(frame)
+            encoding = self._get_face_encoding(frame)
 
-            if embedding is not None:
+            if encoding is not None:
                 similarities = [
-                    self._cosine_similarity(embedding, known) for known in known_encodings
+                    self._cosine_similarity(encoding, known) for known in known_encodings
                 ]
                 max_index = int(np.argmax(similarities))
                 max_sim = similarities[max_index]
@@ -172,7 +196,7 @@ class FaceRecognitionAuth:
         self.storage.log_auth_attempt(best_match or "unknown", "face_recognition", False)
 
         if best_match:
-            return False, None, "Face not recognized with enough confidence"
+            return False, None, f"Face not recognized with enough confidence (best similarity: {best_similarity:.2f})"
         return False, None, "Face authentication timed out"
 
     # ------------------------------------------------------------------
@@ -180,5 +204,5 @@ class FaceRecognitionAuth:
     # ------------------------------------------------------------------
 
     def set_tolerance(self, tolerance):
-        """Adjust the cosine similarity threshold (higher = stricter match required)."""
+        """Adjust the similarity threshold (higher = stricter match required)."""
         self.tolerance = tolerance

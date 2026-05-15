@@ -574,11 +574,22 @@ class SQLiteDatabase:
         """, (today,))
         units_sold_today = cursor.fetchone()[0]
         
+        # Get total quantity in stock
+        cursor.execute("SELECT COALESCE(SUM(quantity), 0) FROM items")
+        total_quantity = cursor.fetchone()[0]
+        
+        # Get total inventory value
+        cursor.execute("SELECT COALESCE(SUM(quantity * price), 0) FROM items")
+        total_inventory_value = cursor.fetchone()[0]
+        
         self.disconnect()
         return {
             'total_items': total_items,
             'low_stock_items': low_stock_items,
-            'units_sold_today': units_sold_today
+            'low_stock_count': low_stock_items,
+            'units_sold_today': units_sold_today,
+            'total_quantity': total_quantity,
+            'total_inventory_value': total_inventory_value,
         }
 
     def get_items_added_per_day(self, days=7):
@@ -589,16 +600,13 @@ class SQLiteDatabase:
         cursor.execute("""
             SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as count
             FROM items
-            WHERE created_at >= ?
+            WHERE created_at >= ? AND created_at IS NOT NULL
             GROUP BY strftime('%Y-%m-%d', created_at)
             ORDER BY date ASC
         """, (cutoff_date,))
         rows = cursor.fetchall()
-        result = {}
-        for row in rows:
-            result[row[0]] = row[1]
         self.disconnect()
-        return result
+        return rows
 
     def get_saleability_increase(self, days=7):
         """Get saleability increase trend for best seller."""
@@ -1092,15 +1100,12 @@ class PostgreSQLDatabase:
             cursor.execute("""
                 SELECT DATE(created_at) as date, COUNT(*) as count
                 FROM items
-                WHERE created_at >= %s
+                WHERE created_at >= %s AND created_at IS NOT NULL
                 GROUP BY DATE(created_at)
                 ORDER BY date ASC
             """, (cutoff_date,))
             rows = cursor.fetchall()
-            result = {}
-            for row in rows:
-                result[str(row[0])] = row[1]
-            return result    
+            return rows    
 
     def connect(self):
         """Return a raw psycopg2 connection (for compatibility with Analytics_UI)."""

@@ -588,6 +588,7 @@ class InventoryDashboard(QWidget):
 
         # Get items added per day
         items_added = self.db.get_items_added_per_day(self.date_range_days)
+        items_added = [item for item in items_added if item[0] is not None]
         if not items_added:
             ax.text(0.5, 0.5, 'No items added in selected period',
                    ha='center', va='center', transform=ax.transAxes)
