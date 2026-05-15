@@ -159,6 +159,61 @@ def api_purchase():
     return jsonify({"ok": all_ok, "results": results})
 
 
+@app.route("/api/restock", methods=["POST"])
+def api_restock():
+    data = request.get_json(force=True)
+    cart  = data.get("items", [])
+    staff = (data.get("staff_name") or "Staff").strip() or "Staff"
+
+    if not cart:
+        return jsonify({"ok": False, "error": "Restock list is empty."}), 400
+
+    db = get_db()
+    results = []
+    all_ok = True
+
+    for line in cart:
+        item_id = int(line["id"])
+        qty     = int(line["qty"])
+
+        if qty <= 0:
+            results.append({"id": item_id, "ok": False, "error": "Invalid restock quantity."})
+            all_ok = False
+            continue
+
+        item_row = db.get_item(item_id)
+        if item_row is None:
+            results.append({"id": item_id, "ok": False, "error": "Item not found."})
+            all_ok = False
+            continue
+
+        item = dict(item_row)
+        new_quantity = item["quantity"] + qty
+        ok = db.update_quantity(
+            item_id=item_id,
+            new_quantity=new_quantity,
+            movement_type="RESTOCK",
+            user_id=None,
+            notes=f"Restocked by {staff}"
+        )
+
+        if ok:
+            results.append({
+                "id":         item_id,  "ok": True,
+                "name":       item["name"], "qty_added": qty,
+                "new_stock":  new_quantity,
+            })
+        else:
+            results.append({
+                "id":        item_id,  "ok": False,
+                "name":      item["name"],
+                "error":     "Failed to update stock.",
+            })
+            all_ok = False
+
+    return jsonify({"ok": all_ok, "results": results})
+
+
 @app.route("/api/stats")
 def api_stats():
     db = get_db()

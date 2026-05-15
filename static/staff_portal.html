@@ -38,6 +38,30 @@
     border: 1px solid #6366f1;
   }
 
+  .page-switch {
+    margin-left: 20px;
+    display: flex;
+    gap: 10px;
+  }
+  .page-btn {
+    background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.25);
+    color: #eef2ff;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .page-btn:hover { background: rgba(255,255,255,.18); }
+  .page-btn.active {
+    background: #eef2ff;
+    color: #111827;
+    border-color: #c7d2fe;
+  }
+
+  .page-hidden { display: none; }
+
   /* ── Layout ───────────────────────────────────────────────────────────── */
   .layout {
     display: grid;
@@ -318,8 +342,13 @@
   <span class="logo">📦</span>
   <h1>ProStock — Staff Purchase Portal</h1>
   <span class="badge" id="nav-badge">Loading inventory…</span>
+  <div class="page-switch">
+    <button class="page-btn active" data-page="purchase" onclick="switchPage('purchase')">Purchase</button>
+    <button class="page-btn" data-page="restock" onclick="switchPage('restock')">Restock</button>
+  </div>
 </nav>
 
+<div id="purchase-page">
 <div class="layout">
 
   <div>
@@ -363,7 +392,53 @@
       </div>
     </div>
   </div>
+</div>
+</div>
 
+<div id="restock-page" class="page-hidden">
+  <div class="layout">
+    <div>
+      <div class="card" style="margin-bottom:18px;">
+        <div class="card-body">
+          <div class="staff-row">
+            <label>👤 Staff Name</label>
+            <input type="text" id="restock-staff-name" placeholder="Enter your name…" maxlength="60" />
+          </div>
+          <div class="search-wrap">
+            <input type="text" id="restock-search-box" placeholder="🔍  Search items for restock…" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="icon">📦</span>
+          <h2>Restock Inventory</h2>
+          <span id="restock-item-count" style="margin-left:auto;font-size:12px;color:#9ca3af;"></span>
+        </div>
+        <div class="card-body">
+          <div id="restock-item-grid">
+            <div class="empty-state"><div class="big">⏳</div>Loading items…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cart-panel">
+      <div class="card">
+        <div class="card-header">
+          <span class="icon">🔄</span>
+          <h2>Restock List</h2>
+          <span id="restock-count" style="margin-left:auto;font-size:12px;color:#9ca3af;">0 items</span>
+        </div>
+        <div class="card-body">
+          <div id="restock-cart-body">
+            <div class="cart-empty"><div class="big">➕</div>No items selected for restock.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="modal-backdrop" id="modal">
@@ -385,6 +460,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let allItems = [];       // [{id, name, sku, price, quantity, category_name, image_path}]
 let cart     = {};       // { itemId: qty }
+let restockCart = {};   // { itemId: qty }
 
 // ── Fetch catalog ──────────────────────────────────────────────────────────
 async function loadItems(query = "") {
@@ -433,6 +509,153 @@ function renderGrid(items) {
         </div>
       </div>`;
   }).join("");
+}
+
+function renderRestockGrid(items) {
+  const grid = document.getElementById("restock-item-grid");
+  if (!items.length) {
+    grid.innerHTML = `<div class="empty-state"><div class="big">🔍</div>No items found.</div>`;
+    return;
+  }
+
+  grid.innerHTML = items.map(item => {
+    const selected = restockCart[item.id] > 0;
+    const qty      = restockCart[item.id] || 0;
+    const imgHtml  = item.image_path
+      ? `<div class="item-img"><img src="/item-image?path=${encodeURIComponent(item.image_path)}" alt="" onerror="this.parentElement.innerHTML='📦'" /></div>`
+      : `<div class="item-img">📦</div>`;
+
+    return `
+      <div class="item-card${selected ? " in-cart" : ""}"
+           data-id="${item.id}">
+        <span class="add-badge">Selected ✓</span>
+        ${imgHtml}
+        <div class="item-name">${esc(item.name)}</div>
+        <div class="item-cat">${esc(item.category_name)}</div>
+        <div class="item-foot">
+          <span class="item-price">₱${item.price.toFixed(2)}</span>
+          <span class="item-stock">${item.quantity} in stock</span>
+        </div>
+        <div class="qty-ctrl" style="margin-top:12px; justify-content: space-between;">
+          <button class="qty-btn" onclick="changeRestockQty(${item.id}, -1)">−</button>
+          <span class="qty-val">${qty}</span>
+          <button class="qty-btn" onclick="changeRestockQty(${item.id}, 1)">＋</button>
+          <button class="qty-btn" style="background:#10b981;color:#fff;border:none;" onclick="addToRestock(${item.id})">Add</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function addToRestock(itemId) {
+  restockCart[itemId] = (restockCart[itemId] || 0) + 1;
+  renderRestockCart();
+  loadRestockItems(document.getElementById("restock-search-box").value.trim());
+}
+
+function changeRestockQty(itemId, delta) {
+  restockCart[itemId] = Math.max((restockCart[itemId] || 0) + delta, 0);
+  if (restockCart[itemId] === 0) delete restockCart[itemId];
+  renderRestockCart();
+  loadRestockItems(document.getElementById("restock-search-box").value.trim());
+}
+
+function removeFromRestock(itemId) {
+  delete restockCart[itemId];
+  renderRestockCart();
+  loadRestockItems(document.getElementById("restock-search-box").value.trim());
+}
+
+function renderRestockCart() {
+  const body = document.getElementById("restock-cart-body");
+  const ids  = Object.keys(restockCart).map(Number);
+  const count = ids.reduce((s, id) => s + restockCart[id], 0);
+  document.getElementById("restock-count").textContent =
+    `${count} item${count !== 1 ? "s" : ""}`;
+
+  if (!ids.length) {
+    body.innerHTML = `
+      <div class="cart-empty"><div class="big">➕</div>No items selected for restock.</div>`;
+    return;
+  }
+
+  const lines = ids.map(id => {
+    const item = allItems.find(i => i.id === id);
+    if (!item) return "";
+    const qty  = restockCart[id];
+    return `
+      <div class="cart-line">
+        <div class="cart-line-info">
+          <div class="cart-line-name">${esc(item.name)}</div>
+          <div class="cart-line-price">Restock qty: ${qty}</div>
+        </div>
+        <button class="remove-btn" onclick="removeFromRestock(${id})" title="Remove">✕</button>
+      </div>`;
+  }).join("");
+
+  body.innerHTML = `
+    <div id="cart-lines">${lines}</div>
+    <button id="confirm-restock-btn" onclick="confirmRestock()">Confirm Restock</button>`;
+}
+
+async function loadRestockItems(query = "") {
+  const url = "/api/items" + (query ? `?q=${encodeURIComponent(query)}` : "");
+  try {
+    const res  = await fetch(url);
+    const items = await res.json();
+    renderRestockGrid(items);
+    document.getElementById("restock-item-count").textContent =
+      `${items.length} result${items.length !== 1 ? "s" : ""}`;
+  } catch(e) {
+    document.getElementById("restock-item-grid").innerHTML =
+      `<div class="empty-state"><div class="big">⚠️</div>Could not reach the server.<br>Make sure the app is running.</div>`;
+  }
+}
+
+async function confirmRestock() {
+  const staffName = document.getElementById("restock-staff-name").value.trim() || "Staff";
+  const ids = Object.keys(restockCart).map(Number);
+  if (!ids.length) return;
+
+  const button = document.querySelector("#restock-page #confirm-restock-btn");
+  if (button) { button.disabled = true; button.textContent = "Processing…"; }
+
+  const payload = {
+    staff_name: staffName,
+    items: ids.map(id => ({ id, qty: restockCart[id] }))
+  };
+
+  try {
+    const res = await fetch("/api/restock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    showRestockReceipt(data, staffName);
+    if (data.ok) {
+      restockCart = {};
+      renderRestockCart();
+      loadItems(document.getElementById("search-box").value.trim());
+      loadRestockItems(document.getElementById("restock-search-box").value.trim());
+    }
+  } catch (e) {
+    showToast("Network error — please try again.");
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "Confirm Restock"; }
+  }
+}
+
+function switchPage(page) {
+  document.querySelectorAll(".page-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.page === page);
+  });
+  document.getElementById("purchase-page").style.display = page === "purchase" ? "block" : "none";
+  document.getElementById("restock-page").style.display = page === "restock" ? "block" : "none";
+  if (page === "restock") {
+    loadRestockItems(document.getElementById("restock-search-box").value.trim());
+  } else {
+    loadItems(document.getElementById("search-box").value.trim());
+  }
 }
 
 // ── Cart operations ────────────────────────────────────────────────────────
@@ -598,6 +821,35 @@ function showReceipt(data, staffName) {
   document.getElementById("modal").classList.add("open");
 }
 
+function showRestockReceipt(data, staffName) {
+  const allOk   = data.ok;
+  const results = data.results || [];
+
+  document.getElementById("modal-icon").textContent  = allOk ? "✅" : "⚠️";
+  document.getElementById("modal-title").textContent = allOk ? "Restock Completed!" : "Partial Restock";
+  document.getElementById("modal-sub").textContent   =
+    `Staff: ${staffName} · ${new Date().toLocaleString()}`;
+
+  const lines = results.map(r => {
+    if (r.ok) {
+      return `
+        <div class="receipt-line">
+          <span class="rname">${esc(r.name)} × ${r.qty_added}</span>
+          <span class="rprice">Stock: ${r.new_stock}</span>
+        </div>`;
+    }
+    return `
+      <div class="receipt-line fail">
+        <span class="rname">✗ ${esc(r.name)} (${r.error})</span>
+        <span class="rprice">—</span>
+      </div>`;
+  }).join("");
+
+  document.getElementById("receipt-lines").innerHTML = lines;
+  document.getElementById("receipt-total").style.display = "none";
+  document.getElementById("modal").classList.add("open");
+}
+
 function closeModal() {
   document.getElementById("modal").classList.remove("open");
 }
@@ -625,6 +877,10 @@ document.getElementById("search-box").addEventListener("input", e => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => loadItems(e.target.value.trim()), 280);
 });
+document.getElementById("restock-search-box").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadRestockItems(e.target.value.trim()), 280);
+});
 
 // ── Close modal on backdrop click ──────────────────────────────────────────
 document.getElementById("modal").addEventListener("click", e => {
@@ -632,10 +888,16 @@ document.getElementById("modal").addEventListener("click", e => {
 });
 
 // ── Auto-refresh every 30 s to reflect desktop app changes ────────────────
-setInterval(() => loadItems(document.getElementById("search-box").value.trim()), 30000);
+setInterval(() => {
+  if (document.getElementById("purchase-page").style.display !== "none") {
+    loadItems(document.getElementById("search-box").value.trim());
+  } else {
+    loadRestockItems(document.getElementById("restock-search-box").value.trim());
+  }
+}, 30000);
 
 // ── Init ───────────────────────────────────────────────────────────────────
-loadItems();
+switchPage("purchase");
 </script>
 </body>
 </html>

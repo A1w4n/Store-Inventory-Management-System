@@ -146,9 +146,43 @@ class FaceRecognitionAuth:
         user_names = list(encodings_dict.keys())
         known_encodings = [np.array(enc) for enc in encodings_dict.values()]
 
+        # Add a 3-second delay to allow user to position themselves
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             return False, None, "Cannot access camera"
+
+        # Show countdown before starting authentication
+        for i in range(3, 0, -1):
+            ret, frame = cap.read()
+            if ret:
+                cv2.putText(
+                    frame,
+                    f"Position yourself in  {i}...",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.imshow("Face Authentication", frame)
+                cv2.waitKey(1000)  # Wait 1 second
+            else:
+                time.sleep(1)  # Fallback if camera read fails
+
+        # Clear the countdown text
+        ret, frame = cap.read()
+        if ret:
+            cv2.putText(
+                frame,
+                "Authenticating...",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
+            cv2.imshow("Face Authentication", frame)
+            cv2.waitKey(1)
 
         start_time = time.time()
         best_match = None
