@@ -25,6 +25,7 @@
 # unchanged so the web portal continues to work exactly as before.
 
 import os
+import time
 import threading
 import uuid
 from datetime import datetime
@@ -40,6 +41,11 @@ CORS(app)
 
 _active_staff = {}  # { session_id: { "name": str, "login_time": datetime } }
 _staff_lock = threading.Lock()
+
+# Cache for /api/staff/active — rebuilt at most once every 30 s
+_staff_cache: dict = {"ok": True, "active_staff": []}
+_staff_cache_ts: float = 0.0
+_STAFF_CACHE_TTL = 30  # seconds
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +129,7 @@ def api_items():
 
 @app.route("/api/staff/login", methods=["POST"])
 def staff_login():
+    global _staff_cache_ts
     data = request.get_json(force=True)
     staff_name = (data.get("staff_name") or "Staff").strip() or "Staff"
     
@@ -132,7 +139,8 @@ def staff_login():
             "name": staff_name,
             "login_time": datetime.now().isoformat()
         }
-    
+    _staff_cache_ts = 0.0  # bust cache so next poll gets fresh data
+
     return jsonify({
         "ok": True,
         "staff_session_id": session_id,
@@ -142,27 +150,33 @@ def staff_login():
 
 @app.route("/api/staff/logout", methods=["POST"])
 def staff_logout():
+    global _staff_cache_ts
     data = request.get_json(force=True)
     session_id = data.get("staff_session_id")
     
     if session_id:
         with _staff_lock:
             _active_staff.pop(session_id, None)
-    
+    _staff_cache_ts = 0.0  # bust cache so next poll gets fresh data
+
     return jsonify({"ok": True})
 
 
 @app.route("/api/staff/active", methods=["GET"])
 def get_active_staff():
-    with _staff_lock:
-        staff_list = [
-            {
-                "name": info["name"],
-                "login_time": info["login_time"]
+    global _staff_cache, _staff_cache_ts
+    now = time.monotonic()
+    if now - _staff_cache_ts > _STAFF_CACHE_TTL:
+        with _staff_lock:
+            _staff_cache = {
+                "ok": True,
+                "active_staff": [
+                    {"name": info["name"], "login_time": info["login_time"]}
+                    for info in _active_staff.values()
+                ]
             }
-            for info in _active_staff.values()
-        ]
-    return jsonify({"ok": True, "active_staff": staff_list})
+        _staff_cache_ts = now
+    return jsonify(_staff_cache)
 
 
 @app.route("/api/purchase", methods=["POST"])

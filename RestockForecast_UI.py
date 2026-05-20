@@ -9,15 +9,293 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton,
     QVBoxLayout, QHBoxLayout, QFrame, QScrollArea,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QComboBox
+    QAbstractItemView, QComboBox, QFileDialog, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont
 
 from database import InventoryDatabase
 from analytics_db import AnalyticsDB
 from charts import HBarChart, KpiCard, SectionCard
 
+
+
+class RestockPlanWorker(QThread):
+    """Generates the Restock Plan Excel file in the background."""
+    finished = Signal(str)
+    error    = Signal(str)
+
+    def __init__(self, path, days, adb):
+        super().__init__()
+        self.path = path
+        self.days = days
+        self.adb  = adb
+
+    def run(self):
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from datetime import datetime, timedelta
+
+            wb = Workbook()
+
+            # ── palette ───────────────────────────────────────────────────────
+            PURPLE       = "4F46E5"
+            PURPLE_LIGHT = "EDE9FE"
+            GREEN        = "10B981"
+            GREEN_LIGHT  = "D1FAE5"
+            RED          = "EF4444"
+            RED_LIGHT    = "FEE2E2"
+            AMBER        = "F59E0B"
+            AMBER_LIGHT  = "FEF3C7"
+            WHITE        = "FFFFFF"
+            DARK         = "111827"
+            MID          = "6B7280"
+            thin = Side(style="thin", color="E5E7EB")
+            bdr  = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+            def hdr_font(sz=10, color=WHITE):
+                return Font(name="Arial", size=sz, bold=True, color=color)
+            def body_font(sz=10, bold=False, color=DARK):
+                return Font(name="Arial", size=sz, bold=bold, color=color)
+            def fill(color):
+                return PatternFill("solid", fgColor=color)
+            def center():
+                return Alignment(horizontal="center", vertical="center", wrap_text=True)
+            def left():
+                return Alignment(horizontal="left", vertical="center", wrap_text=True)
+            def right_al():
+                return Alignment(horizontal="right", vertical="center")
+
+            def banner(ws, text, ncols, fill_color=PURPLE):
+                ws.merge_cells(start_row=1, start_column=1,
+                               end_row=1, end_column=ncols)
+                c = ws.cell(row=1, column=1, value=text)
+                c.font = Font(name="Arial", size=14, bold=True, color=WHITE)
+                c.fill = fill(fill_color); c.alignment = center()
+                ws.row_dimensions[1].height = 32
+
+            def subtitle(ws, text, ncols):
+                ws.merge_cells(start_row=2, start_column=1,
+                               end_row=2, end_column=ncols)
+                c = ws.cell(row=2, column=1, value=text)
+                c.font = Font(name="Arial", size=10, color=MID)
+                c.fill = fill(PURPLE_LIGHT); c.alignment = center()
+                ws.row_dimensions[2].height = 16
+
+            def table_hdr(ws, row, headers, col_start=1):
+                for i, h in enumerate(headers):
+                    c = ws.cell(row=row, column=col_start+i, value=h)
+                    c.font = hdr_font(); c.fill = fill(PURPLE)
+                    c.alignment = center(); c.border = bdr
+                ws.row_dimensions[row].height = 22
+
+            def table_row(ws, row, values, col_start=1, alt=False,
+                          row_fill=None):
+                bg = row_fill or (fill("F9FAFB") if alt else fill(WHITE))
+                for i, v in enumerate(values):
+                    c = ws.cell(row=row, column=col_start+i, value=v)
+                    c.font = body_font(); c.fill = bg; c.border = bdr
+                    c.alignment = right_al() if isinstance(v,(int,float)) else left()
+                ws.row_dimensions[row].height = 18
+
+            now      = datetime.now()
+            now_str  = now.strftime("%B %d, %Y %H:%M")
+            forecast = self.adb.restock_forecast(self.days)
+
+            # split by urgency
+            critical = [f for f in forecast if f["days_left"] <  7]
+            warning  = [f for f in forecast if 7  <= f["days_left"] < 14]
+            healthy  = [f for f in forecast if f["days_left"] >= 14]
+
+            # ══════════════════════════════════════════════════════════════════
+            # SHEET 1 — Restock Action Plan  (the "what to order" sheet)
+            # ══════════════════════════════════════════════════════════════════
+            ws = wb.active
+            ws.title = "Restock Action Plan"
+            ws.sheet_view.showGridLines = False
+            col_widths = [32, 16, 16, 16, 18, 20, 20]
+            for i, w in enumerate(col_widths, 1):
+                from openpyxl.utils import get_column_letter
+                ws.column_dimensions[get_column_letter(i)].width = w
+
+            banner(ws, "🛒  ProStock — Restock Action Plan", 7)
+            subtitle(ws, f"Generated: {now_str}   |   Based on last {self.days} days sales velocity", 7)
+
+            # instructions row
+            ws.merge_cells("A3:G3")
+            c = ws["A3"]
+            c.value = ("Fill in the 'Order Qty' column (col G) with your actual "
+                       "order quantities. Suggested quantities are pre-filled based on "
+                       "30-day demand. Highlight rows in RED = order immediately.")
+            c.font = Font(name="Arial", size=9, italic=True, color="4C1D95")
+            c.fill = fill(PURPLE_LIGHT); c.alignment = left()
+            ws.row_dimensions[3].height = 14
+
+            headers = ["Item", "Current Stock", "Avg Daily Sales",
+                       "Days Remaining", "Status",
+                       "Suggested Order Qty", "Actual Order Qty ✏️"]
+            table_hdr(ws, 4, headers)
+
+            all_items = critical + warning + healthy
+            for i, f in enumerate(all_items):
+                row_n     = 5 + i
+                days_left = f["days_left"]
+                suggested = max(1, int(f["avg_daily"] * 30))
+
+                if days_left < 7:
+                    status   = "🔴 CRITICAL — Order Now"
+                    row_fill = fill(RED_LIGHT)
+                    st_color = RED
+                elif days_left < 14:
+                    status   = "🟡 WARNING — Order Soon"
+                    row_fill = fill(AMBER_LIGHT)
+                    st_color = AMBER
+                else:
+                    status   = "🟢 Healthy"
+                    row_fill = None
+                    st_color = GREEN
+
+                vals = [
+                    f["name"],
+                    int(f["stock"]),
+                    round(float(f["avg_daily"]), 2),
+                    round(float(days_left), 1),
+                    status,
+                    suggested,
+                    suggested,   # pre-fill actual = suggested; staff can edit
+                ]
+                table_row(ws, row_n, vals, alt=i%2==0, row_fill=row_fill)
+
+                # colour status + days cells
+                ws.cell(row=row_n, column=4).font = body_font(bold=True, color=st_color)
+                ws.cell(row=row_n, column=5).font = body_font(bold=True, color=st_color)
+
+                # make Actual Order Qty column stand out (editable intent)
+                edit_cell = ws.cell(row=row_n, column=7)
+                edit_cell.fill      = fill("FEFCE8")
+                edit_cell.font      = body_font(bold=True, color="92400E")
+                edit_cell.alignment = center()
+
+            # Totals
+            tr = 5 + len(all_items)
+            ws.cell(row=tr, column=1, value="TOTALS")
+            ws.cell(row=tr, column=2, value=f"=SUM(B5:B{tr-1})")
+            ws.cell(row=tr, column=6, value=f"=SUM(F5:F{tr-1})")
+            ws.cell(row=tr, column=7, value=f"=SUM(G5:G{tr-1})")
+            for col in range(1, 8):
+                c = ws.cell(row=tr, column=col)
+                c.font = hdr_font(); c.fill = fill(PURPLE)
+                c.border = bdr
+                c.alignment = right_al() if col > 1 else left()
+            ws.row_dimensions[tr].height = 20
+
+            # ══════════════════════════════════════════════════════════════════
+            # SHEET 2 — Critical Items  (red urgency)
+            # ══════════════════════════════════════════════════════════════════
+            ws2 = wb.create_sheet("🔴 Critical")
+            ws2.sheet_view.showGridLines = False
+            for i, w in enumerate([32,16,16,16,18], 1):
+                from openpyxl.utils import get_column_letter
+                ws2.column_dimensions[get_column_letter(i)].width = w
+
+            banner(ws2, "🔴  CRITICAL — Must Restock Within 7 Days", 5, RED)
+            subtitle(ws2, f"{len(critical)} items need immediate attention", 5)
+            table_hdr(ws2, 3, ["Item","Current Stock","Avg Daily Sales",
+                                "Days Remaining","Suggested Order Qty"])
+
+            if critical:
+                for i, f in enumerate(critical):
+                    row_n     = 4 + i
+                    suggested = max(1, int(f["avg_daily"] * 30))
+                    table_row(ws2, row_n,
+                              [f["name"], int(f["stock"]),
+                               round(float(f["avg_daily"]),2),
+                               round(float(f["days_left"]),1), suggested],
+                              row_fill=fill(RED_LIGHT))
+                    for col in [4]:
+                        ws2.cell(row=row_n,column=col).font=body_font(bold=True,color=RED)
+                tr2 = 4 + len(critical)
+                ws2.cell(row=tr2,column=1,value="TOTAL")
+                ws2.cell(row=tr2,column=5,value=f"=SUM(E4:E{tr2-1})")
+                for col in range(1,6):
+                    c=ws2.cell(row=tr2,column=col)
+                    c.font=hdr_font(color=WHITE); c.fill=fill(RED)
+                    c.border=bdr; c.alignment=right_al() if col>1 else left()
+            else:
+                ws2.merge_cells("A4:E4")
+                c = ws2["A4"]
+                c.value = "✅ No critical items — all stock levels are healthy!"
+                c.font  = body_font(bold=True, color=GREEN)
+                c.fill  = fill(GREEN_LIGHT); c.alignment = center()
+
+            # ══════════════════════════════════════════════════════════════════
+            # SHEET 3 — Warning Items
+            # ══════════════════════════════════════════════════════════════════
+            ws3 = wb.create_sheet("🟡 Warning")
+            ws3.sheet_view.showGridLines = False
+            for i, w in enumerate([32,16,16,16,18], 1):
+                from openpyxl.utils import get_column_letter
+                ws3.column_dimensions[get_column_letter(i)].width = w
+
+            banner(ws3, "🟡  WARNING — Restock Within 7–14 Days", 5, AMBER)
+            subtitle(ws3, f"{len(warning)} items need restocking soon", 5)
+            table_hdr(ws3, 3, ["Item","Current Stock","Avg Daily Sales",
+                                "Days Remaining","Suggested Order Qty"])
+
+            if warning:
+                for i, f in enumerate(warning):
+                    row_n     = 4 + i
+                    suggested = max(1, int(f["avg_daily"] * 30))
+                    table_row(ws3, row_n,
+                              [f["name"], int(f["stock"]),
+                               round(float(f["avg_daily"]),2),
+                               round(float(f["days_left"]),1), suggested],
+                              row_fill=fill(AMBER_LIGHT))
+                    ws3.cell(row=row_n,column=4).font=body_font(bold=True,color=AMBER)
+                tr3 = 4 + len(warning)
+                ws3.cell(row=tr3,column=1,value="TOTAL")
+                ws3.cell(row=tr3,column=5,value=f"=SUM(E4:E{tr3-1})")
+                for col in range(1,6):
+                    c=ws3.cell(row=tr3,column=col)
+                    c.font=hdr_font(color=WHITE); c.fill=fill(AMBER)
+                    c.border=bdr; c.alignment=right_al() if col>1 else left()
+            else:
+                ws3.merge_cells("A4:E4")
+                c = ws3["A4"]
+                c.value = "✅ No warning items!"
+                c.font  = body_font(bold=True, color=GREEN)
+                c.fill  = fill(GREEN_LIGHT); c.alignment = center()
+
+            # ══════════════════════════════════════════════════════════════════
+            # SHEET 4 — Healthy Items
+            # ══════════════════════════════════════════════════════════════════
+            ws4 = wb.create_sheet("🟢 Healthy")
+            ws4.sheet_view.showGridLines = False
+            for i, w in enumerate([32,16,16,16,18], 1):
+                from openpyxl.utils import get_column_letter
+                ws4.column_dimensions[get_column_letter(i)].width = w
+
+            banner(ws4, "🟢  HEALTHY — Stock Levels OK (14+ Days)", 5, GREEN)
+            subtitle(ws4, f"{len(healthy)} items have sufficient stock", 5)
+            table_hdr(ws4, 3, ["Item","Current Stock","Avg Daily Sales",
+                                "Days Remaining","Suggested Order Qty"])
+
+            for i, f in enumerate(healthy):
+                row_n     = 4 + i
+                suggested = max(1, int(f["avg_daily"] * 30))
+                table_row(ws4, row_n,
+                          [f["name"], int(f["stock"]),
+                           round(float(f["avg_daily"]),2),
+                           round(float(f["days_left"]),1), suggested],
+                          alt=i%2==0)
+                ws4.cell(row=row_n,column=4).font=body_font(bold=True,color=GREEN)
+
+            wb.save(self.path)
+            self.finished.emit(self.path)
+
+        except Exception as ex:
+            self.error.emit("Restock plan generation failed: " + str(ex))
 
 class RestockForecastPage(QWidget):
     """Restock Forecast full sidebar page."""
@@ -84,6 +362,22 @@ class RestockForecastPage(QWidget):
         """)
         refresh_btn.clicked.connect(self.refresh)
         hdr_lay.addWidget(refresh_btn)
+
+        self.plan_btn = QPushButton("🛒  Generate Restock Plan")
+        self.plan_btn.setCursor(Qt.PointingHandCursor)
+        self.plan_btn.setFixedHeight(36)
+        self.plan_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #f59e0b, stop:1 #d97706);
+                color: white; border-radius: 8px; padding: 0 16px;
+                font-size: 13px; font-weight: 600; border: none;
+            }
+            QPushButton:hover { background: #b45309; }
+            QPushButton:disabled { background: #d1d5db; color: #9ca3af; }
+        """)
+        self.plan_btn.clicked.connect(self._generate_plan)
+        hdr_lay.addWidget(self.plan_btn)
         root.addWidget(hdr_widget)
 
         line = QFrame()
@@ -170,6 +464,52 @@ class RestockForecastPage(QWidget):
     def _on_period_change(self, text):
         self.current_days = self.PERIOD_DAYS[text]
         self.refresh()
+
+    def _generate_plan(self):
+        from datetime import datetime
+        default_name = f"RestockPlan_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Restock Plan", default_name,
+            "Excel Files (*.xlsx)"
+        )
+        if not path:
+            return
+
+        self.plan_btn.setEnabled(False)
+        self.plan_btn.setText("⏳  Generating…")
+
+        self._plan_worker = RestockPlanWorker(path, self.current_days, self.adb)
+        self._plan_worker.finished.connect(self._on_plan_done)
+        self._plan_worker.error.connect(self._on_plan_error)
+        self._plan_worker.start()
+
+    def _on_plan_done(self, path):
+        self.plan_btn.setEnabled(True)
+        self.plan_btn.setText("🛒  Generate Restock Plan")
+        import subprocess, sys, os
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Restock Plan Ready")
+        msg.setText("✅ Restock plan saved successfully!")
+        msg.setInformativeText(path)
+        msg.setStandardButtons(QMessageBox.Open | QMessageBox.Ok)
+        msg.setDefaultButton(QMessageBox.Open)
+        msg.setStyleSheet("QLabel { color: #111827; font-size: 13px; }")
+        if msg.exec() == QMessageBox.Open:
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.call(["open", path])
+            else:
+                subprocess.call(["xdg-open", path])
+
+    def _on_plan_error(self, msg):
+        self.plan_btn.setEnabled(True)
+        self.plan_btn.setText("🛒  Generate Restock Plan")
+        err = QMessageBox(self)
+        err.setWindowTitle("Plan Generation Error")
+        err.setText("⚠️ " + msg)
+        err.setStyleSheet("QLabel { color: #111827; font-size: 13px; }")
+        err.exec()
 
     def refresh(self):
         days = self.current_days

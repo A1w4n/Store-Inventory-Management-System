@@ -8,9 +8,9 @@ from PIL import Image as PILImage
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QFrame, QPushButton, QScrollArea, QLineEdit, QTimer
+    QLabel, QFrame, QPushButton, QScrollArea, QLineEdit
 )
-from PySide6.QtCore import Qt, QByteArray
+from PySide6.QtCore import Qt, QByteArray, QTimer
 from PySide6.QtGui import QPixmap, QFont, QImage
 
 WEB_PORT = 5000
@@ -78,8 +78,19 @@ class StaffAccessPage(QWidget):
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self._load_active_staff)
         self._build_ui()
-        self._load_active_staff()
-        self.refresh_timer.start(3000)  # Refresh every 3 seconds
+        # Do NOT start the timer here — showEvent/hideEvent manage it so the
+        # timer only runs while this page is actually visible to the user.
+
+    def showEvent(self, event):
+        """Start polling only when this page becomes visible."""
+        super().showEvent(event)
+        self._load_active_staff()           # immediate fetch on open
+        self.refresh_timer.start(30_000)    # then every 30 s
+
+    def hideEvent(self, event):
+        """Stop polling when user switches away — zero Render hits when not viewing."""
+        super().hideEvent(event)
+        self.refresh_timer.stop()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -301,8 +312,14 @@ class StaffAccessPage(QWidget):
 
     def _get_url(self) -> str:
         import os
-        base = os.environ.get("STAFF_PORTAL_URL", f"http://{_get_local_ip()}:{self.port}")
-        return base
+        # 1. Explicit override (e.g. set manually)
+        if url := os.environ.get("STAFF_PORTAL_URL"):
+            return url
+        # 2. Render deployment URL (same env var used by main.py / sync_engine)
+        if url := os.environ.get("CLOUD_URL"):
+            return url
+        # 3. Fallback to local IP:port for development
+        return f"http://{_get_local_ip()}:{self.port}"
 
     def _update_qr_pixmap(self):
         url = self._get_url()
@@ -399,7 +416,7 @@ class StaffAccessPage(QWidget):
     def _load_active_staff(self):
         """Load active staff from the server."""
         try:
-            url = f"http://localhost:{self.port}/api/staff/active"
+            url = f"{self._get_url()}/api/staff/active"
             response = requests.get(url, timeout=2)
             data = response.json()
             

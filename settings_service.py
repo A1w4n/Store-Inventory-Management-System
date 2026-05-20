@@ -38,6 +38,9 @@ DEFAULT_SETTINGS = {
     "backup_interval_days": 7,
     "backup_path": "",
 
+    # UI
+    "ui_refresh_debounce_ms": 800,
+
     # Account (read-only display; changes go through StaffAccess/auth)
     "admin_username": "admin",
     "admin_email": "admin@inventory.com",

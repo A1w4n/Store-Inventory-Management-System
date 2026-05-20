@@ -291,6 +291,15 @@ class SettingsPage(QWidget):
         self.date_fmt.setCurrentText(self._svc.get("date_format"))
         cl.addLayout(_field_row("Date Format", self.date_fmt))
 
+        # UI behavior
+        self.ui_debounce_spin = QSpinBox()
+        self.ui_debounce_spin.setRange(100, 5000)
+        self.ui_debounce_spin.setSingleStep(50)
+        self.ui_debounce_spin.setSuffix(" ms")
+        self.ui_debounce_spin.setValue(int(self._svc.get("ui_refresh_debounce_ms", 800)))
+        cl.addLayout(_field_row("UI Refresh Debounce", self.ui_debounce_spin,
+                                "Milliseconds to coalesce rapid dashboard updates"))
+
         self._cl.addWidget(card)
 
     def _build_inventory_section(self):
@@ -589,6 +598,8 @@ class SettingsPage(QWidget):
             "backup_enabled":           self.backup_enabled.isChecked(),
             "backup_interval_days":     self.backup_interval.value(),
             "backup_path":              self.backup_path.text(),
+            # UI
+            "ui_refresh_debounce_ms":   self.ui_debounce_spin.value(),
         }
         self._svc.set_many(updates)
         self._show_toast("Settings saved ✓")

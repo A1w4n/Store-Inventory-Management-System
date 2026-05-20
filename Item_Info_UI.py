@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QDialog, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QMessageBox,
     QFileDialog, QCheckBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QThread
 from PySide6.QtGui import QAction, QPixmap
 import barcode
 from barcode.writer import ImageWriter
@@ -41,9 +41,21 @@ class ItemRow(QFrame):
         item_dict = dict(self.item_data) if self.item_data else {}
         image_path = item_dict.get('image_path')
 
-        # Check if the image path exists in the database AND on the computer
-        if image_path and Path(image_path).exists():
-            pixmap = QPixmap(image_path)
+        # Load image: supports Base64 data URIs (new) and file paths (legacy)
+        pixmap = None
+        if image_path:
+            if image_path.startswith("data:"):
+                import base64 as _b64
+                header, data = image_path.split(",", 1)
+                raw = _b64.b64decode(data)
+                qpix = QPixmap()
+                qpix.loadFromData(raw)
+                pixmap = qpix if not qpix.isNull() else None
+            else:
+                p = Path(image_path)
+                if p.exists():
+                    pixmap = QPixmap(str(p))
+        if pixmap:
             # Scale image smoothly to fit the box
             img_label.setPixmap(pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             img_label.setStyleSheet("border: 1px solid #e5e7eb; border-radius: 6px;")
@@ -123,8 +135,21 @@ class ItemCard(QFrame):
         item_dict = dict(self.item_data) if self.item_data else {}
         image_path = item_dict.get('image_path')
 
-        if image_path and Path(image_path).exists():
-            pixmap = QPixmap(image_path)
+        # Load image: supports Base64 data URIs (new) and file paths (legacy)
+        pixmap = None
+        if image_path:
+            if image_path.startswith("data:"):
+                import base64 as _b64
+                header, data = image_path.split(",", 1)
+                raw = _b64.b64decode(data)
+                qpix = QPixmap()
+                qpix.loadFromData(raw)
+                pixmap = qpix if not qpix.isNull() else None
+            else:
+                p = Path(image_path)
+                if p.exists():
+                    pixmap = QPixmap(str(p))
+        if pixmap:
             img_label.setPixmap(pixmap.scaled(150, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             img_label.setStyleSheet("border-radius: 8px;")
         else:
@@ -347,6 +372,103 @@ class AddCategoryDialog(QDialog):
             self.name_input.setPlaceholderText("That category already exists!")
 
 
+
+class GeminiWorker(QThread):
+    """Background thread that sends the image to Groq and returns parsed fields."""
+    result_ready = Signal(object)
+    error        = Signal(str)
+
+    def __init__(self, image_bytes: bytes, mime: str, categories: list):
+        super().__init__()
+        self.image_bytes = image_bytes
+        self.mime        = mime
+        self.categories  = categories
+
+    def run(self):
+        try:
+            import os, json, base64
+            from io import BytesIO
+            from dotenv import load_dotenv
+
+            load_dotenv()
+            api_key = os.getenv("GROQ_API_KEY", "")
+            if not api_key:
+                self.error.emit("GROQ_API_KEY not found in .env file. Get a free key at console.groq.com")
+                return
+
+            # Install groq SDK if missing
+            try:
+                from groq import Groq
+            except ImportError:
+                import subprocess, sys
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "groq", "-q"])
+                from groq import Groq
+
+            # Compress image
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.open(BytesIO(self.image_bytes)).convert("RGB")
+                img.thumbnail((512, 512), PILImage.LANCZOS)
+                buf = BytesIO()
+                img.save(buf, format="JPEG", quality=80)
+                compressed = buf.getvalue()
+            except ImportError:
+                compressed = self.image_bytes
+
+            b64_image = base64.b64encode(compressed).decode()
+            cat_list = ", ".join(self.categories) if self.categories else "Electronics, Food, Clothing, Furniture, Other"
+
+            prompt = (
+                "You are a product catalog assistant for a Filipino inventory system. "
+                "Prices must be in Philippine Peso (PHP). "
+                "Look at this product image and return ONLY a valid JSON object "
+                "with no markdown, no explanation, no extra text. "
+                "Fields: name (title case string), price (number in PHP), "
+                "category (best match from: " + cat_list + "), "
+                "sku (short code like PIATTOS-CHZ), "
+                "description (1-2 sentences)."
+            )
+
+            client = Groq(api_key=api_key)
+            response = client.chat.completions.create(
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:image/jpeg;base64," + b64_image
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=512,
+                temperature=0.2
+            )
+
+            text = response.choices[0].message.content.strip()
+
+            # Strip markdown fences
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            text = text.strip()
+
+            parsed = json.loads(text)
+            self.result_ready.emit(parsed)
+
+        except Exception as ex:
+            self.error.emit("Auto-fill failed: " + str(ex))
+
+
 class AddItemDialog(QDialog):
     """Dialog for adding a new item or updating an existing one."""
     def __init__(self, db, parent=None, item_data=None):
@@ -464,9 +586,19 @@ class AddItemDialog(QDialog):
         self.image_preview.setWordWrap(True)
         self.image_preview.setCursor(Qt.PointingHandCursor)
         
-        if self.image_path and Path(self.image_path).exists():
-            pixmap = QPixmap(self.image_path)
-            self.image_preview.setPixmap(pixmap.scaled(210, 210, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        # Support Base64 data URIs (new) and legacy file paths
+        _preview_pixmap = None
+        if self.image_path:
+            if self.image_path.startswith("data:"):
+                import base64 as _b64
+                _, _b64data = self.image_path.split(",", 1)
+                _raw = _b64.b64decode(_b64data)
+                _qp  = QPixmap(); _qp.loadFromData(_raw)
+                _preview_pixmap = _qp if not _qp.isNull() else None
+            elif Path(self.image_path).exists():
+                _preview_pixmap = QPixmap(self.image_path)
+        if _preview_pixmap:
+            self.image_preview.setPixmap(_preview_pixmap.scaled(210, 210, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.image_preview.setStyleSheet("""
                 QLabel {
                     background-color: #f9fafb;
@@ -495,7 +627,7 @@ class AddItemDialog(QDialog):
         left_layout.addWidget(self.image_preview, 0, Qt.AlignHCenter)
 
         # Change photo button
-        browse_btn = QPushButton("Change Photo")
+        browse_btn = QPushButton("📷  Change Photo")
         browse_btn.setCursor(Qt.PointingHandCursor)
         browse_btn.setStyleSheet("""
             QPushButton {
@@ -515,6 +647,38 @@ class AddItemDialog(QDialog):
         """)
         browse_btn.clicked.connect(self.browse_image)
         left_layout.addWidget(browse_btn)
+
+        # AI Auto-fill button
+        self.ai_btn = QPushButton("✨  Auto-fill with AI")
+        self.ai_btn.setCursor(Qt.PointingHandCursor)
+        self.ai_btn.setEnabled(False)   # enabled only after image is picked
+        self.ai_btn.setToolTip("Pick an image first, then click to auto-fill fields using Gemini AI")
+        self.ai_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #7c3aed, stop:1 #4f46e5);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 0;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover { opacity: 0.9; }
+            QPushButton:disabled {
+                background: #e5e7eb;
+                color: #9ca3af;
+            }
+        """)
+        self.ai_btn.clicked.connect(self.autofill_from_image)
+        left_layout.addWidget(self.ai_btn)
+
+        # Status label for AI feedback
+        self.ai_status = QLabel("")
+        self.ai_status.setWordWrap(True)
+        self.ai_status.setAlignment(Qt.AlignCenter)
+        self.ai_status.setStyleSheet("font-size: 11px; color: #6b7280;")
+        left_layout.addWidget(self.ai_status)
 
         left_layout.addStretch()
 
@@ -769,7 +933,19 @@ class AddItemDialog(QDialog):
             "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         if file_path:
-            self.image_path = file_path
+            import base64, mimetypes
+            mime, _ = mimetypes.guess_type(file_path)
+            mime = mime or "image/png"
+            with open(file_path, "rb") as f:
+                raw_bytes = f.read()
+            b64 = base64.b64encode(raw_bytes).decode("utf-8")
+            self.image_path  = f"data:{mime};base64,{b64}"
+            self._image_raw  = raw_bytes   # kept for Gemini upload
+            self._image_mime = mime
+            # Enable AI button now that we have an image
+            if hasattr(self, "ai_btn"):
+                self.ai_btn.setEnabled(True)
+                self.ai_status.setText("Image ready — click ✨ to auto-fill")
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
                 self.image_preview.setPixmap(pixmap.scaled(
@@ -805,6 +981,63 @@ class AddItemDialog(QDialog):
                     color: #4f46e5;
                 }
             """)
+
+    def autofill_from_image(self):
+        """Send the selected image to Gemini and auto-fill the form fields."""
+        if not hasattr(self, "_image_raw"):
+            return
+
+        self.ai_btn.setEnabled(False)
+        self.ai_btn.setText("⏳  Analyzing…")
+        self.ai_status.setText("Sending image to Gemini AI…")
+
+        categories = [self.category_combo.itemText(i)
+                      for i in range(self.category_combo.count())
+                      if self.category_combo.itemText(i) != "— No Category —"]
+
+        self._worker = GeminiWorker(self._image_raw, self._image_mime, categories)
+        self._worker.result_ready.connect(self._apply_autofill)
+        self._worker.error.connect(self._autofill_error)
+        self._worker.start()
+
+    def _apply_autofill(self, data: dict):
+        """Fill the form with Gemini's response."""
+        if data.get("name"):
+            self.name_input.setText(str(data["name"]))
+        if data.get("price"):
+            try:
+                self.price_input.setValue(float(data["price"]))
+            except (ValueError, TypeError):
+                pass
+        if data.get("sku"):
+            self.sku_input.setText(str(data["sku"]))
+        if data.get("description"):
+            self.description_input.setText(str(data["description"]))
+        if data.get("category"):
+            suggested = str(data["category"]).strip().lower()
+            matched = False
+            for i in range(self.category_combo.count()):
+                if self.category_combo.itemText(i).strip().lower() == suggested:
+                    self.category_combo.setCurrentIndex(i)
+                    matched = True
+                    break
+            if not matched:
+                # Category doesn't exist yet — offer to create it
+                self.ai_status.setText(
+                    f'✨ Done! Suggested category "{data["category"]}" not in list — add it manually if needed.')
+            else:
+                self.ai_status.setText("✨ Fields auto-filled! Review and adjust before saving.")
+        else:
+            self.ai_status.setText("✨ Fields auto-filled! Review and adjust before saving.")
+
+        self.ai_btn.setEnabled(True)
+        self.ai_btn.setText("✨  Auto-fill with AI")
+
+    def _autofill_error(self, msg: str):
+        """Show error and re-enable button."""
+        self.ai_status.setText(f"⚠️ {msg}")
+        self.ai_btn.setEnabled(True)
+        self.ai_btn.setText("✨  Auto-fill with AI")
 
     def add_item(self):
         """Add item to database."""
@@ -1092,18 +1325,22 @@ class ItemInfoPage(QWidget):
         super().__init__()
         self.db = db or InventoryDatabase()
         self.setStyleSheet("background-color: #f9fafb;")
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.current_mode = "list"
         self.search_term = ""
-        self.current_item = None  # Track the currently selected/displayed item
+        self.current_item = None
+        self.active_category_filter = "All"
+        self.sort_key = "time_added"  # Track the currently selected/displayed item
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(24, 20, 24, 24)
-        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(24, 0, 24, 24)
+        main_layout.setSpacing(12)
 
         # 1. HEADER with Toggle Button
         header = QHBoxLayout()
         title = QLabel("Item Information")
-        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #111827;")
+        title.setStyleSheet("font-size: 38px; font-weight: bold; color: #111827;")
         header.addWidget(title)
         header.addStretch()
 
@@ -1172,6 +1409,23 @@ class ItemInfoPage(QWidget):
         # Item Sorter button
         header.addWidget(self.item_sorter())
 
+        # Category filter pill bar
+        self.cat_filter_bar = QHBoxLayout()
+        self.cat_filter_bar.setSpacing(8)
+        self.cat_filter_bar.setAlignment(Qt.AlignLeft)
+        self.cat_filter_scroll_widget = QWidget()
+        self.cat_filter_scroll_widget.setLayout(self.cat_filter_bar)
+        self.cat_filter_scroll_widget.setStyleSheet("background: transparent;")
+        cat_filter_scroll = QScrollArea()
+        cat_filter_scroll.setWidget(self.cat_filter_scroll_widget)
+        cat_filter_scroll.setWidgetResizable(True)
+        cat_filter_scroll.setFixedHeight(46)
+        cat_filter_scroll.setFrameShape(QFrame.NoFrame)
+        cat_filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        cat_filter_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        cat_filter_scroll.setStyleSheet("background: transparent; border: none;")
+        main_layout.addWidget(cat_filter_scroll)
+
         # 2. VIEW STACK (The area that changes)
         self.view_stack = QStackedWidget()
         self.view_stack.setStyleSheet("background-color: #f9fafb; border: none;")
@@ -1228,48 +1482,180 @@ class ItemInfoPage(QWidget):
         grid_scroll.setWidget(grid_container)
         self.view_stack.addWidget(grid_scroll)
 
-        # Load initial items
+        # ── Category filter pill bar ──────────────────────────────────────
+        self.cat_filter_bar = QHBoxLayout()
+        self.cat_filter_bar.setSpacing(8)
+        self.cat_filter_bar.setAlignment(Qt.AlignLeft)
+        self.cat_filter_scroll_widget = QWidget()
+        self.cat_filter_scroll_widget.setLayout(self.cat_filter_bar)
+        self.cat_filter_scroll_widget.setStyleSheet("background: transparent;")
+        self.cat_filter_scroll = QScrollArea()
+        self.cat_filter_scroll.setWidget(self.cat_filter_scroll_widget)
+        self.cat_filter_scroll.setWidgetResizable(True)
+        self.cat_filter_scroll.setFixedHeight(42)
+        self.cat_filter_scroll.setFrameShape(QFrame.NoFrame)
+        self.cat_filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.cat_filter_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.cat_filter_scroll.setStyleSheet("background: transparent; border: none;")
+
+        # Build detail panel (cat_filter_bar must exist before refresh_items)
         self.detail_panel = self._create_detail_panel()
         self.refresh_items()
 
-        # Content row with item views and detail panel - now expandable
+        # Content row
         content_row = QHBoxLayout()
         content_row.setSpacing(20)
         content_row.addWidget(self.view_stack, 3)
         content_row.addWidget(self.detail_panel, 1)
 
-        # Add layouts to main
-        main_layout.addLayout(header)
-        main_layout.addLayout(content_row, 1)  # Add stretch factor to content
+        # ── Add to main layout in correct order ────────────────────────────
+        main_layout.addLayout(header)            # title + buttons row
+        main_layout.addWidget(self.cat_filter_scroll)  # category pills (below title)
+        main_layout.addLayout(content_row, 1)    # list/grid + detail panel
+
+    def _make_cat_pill(self, label, active):
+        """Create a styled category filter pill button."""
+        btn = QPushButton(label)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setCheckable(True)
+        btn.setChecked(active)
+        btn.setFixedHeight(30)
+        if active:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #4f46e5; color: #ffffff;
+                    border: 1.5px solid #4f46e5; border-radius: 15px;
+                    font-size: 12px; font-weight: 700; padding: 0 14px;
+                }
+            """)
+        else:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #ffffff; color: #6b7280;
+                    border: 1.5px solid #d1d5db; border-radius: 15px;
+                    font-size: 12px; font-weight: 600; padding: 0 14px;
+                }
+                QPushButton:hover {
+                    border-color: #4f46e5; color: #4f46e5; background: #eef2ff;
+                }
+            """)
+        btn.clicked.connect(lambda _, l=label: self._set_cat_filter(l))
+        return btn
+
+    def _set_cat_filter(self, label):
+        self.active_category_filter = label
+        self.refresh_items()
+
+    def _make_cat_section_header(self, cat_name, count):
+        """Return a QWidget used as a category section divider in list/grid."""
+        row = QWidget()
+        row.setFixedHeight(36)
+        row.setStyleSheet("background: transparent;")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(4, 4, 4, 4)
+        hl.setSpacing(10)
+        lbl = QLabel(cat_name.upper())
+        lbl.setStyleSheet(
+            "font-size: 11px; font-weight: 700; color: #4f46e5; letter-spacing: 0.8px; background: transparent;"
+        )
+        hl.addWidget(lbl)
+        cnt = QLabel(f"{count} item{'s' if count != 1 else ''}")
+        cnt.setStyleSheet("font-size: 11px; color: #9ca3af; background: transparent;")
+        hl.addWidget(cnt)
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("color: #e5e7eb;")
+        hl.addWidget(line, 1)
+        return row
 
     def refresh_items(self):
-        """Refresh item lists from database."""
-        # Clear layouts - immediate deletion instead of deleteLater to prevent duplicates
+        """Refresh item lists from database, grouped by category."""
+        # ── Clear list layout ──────────────────────────────────────────────
         while self.list_layout.count():
-            widget = self.list_layout.takeAt(0).widget()
-            if widget:
-                widget.setParent(None)
-                widget.deleteLater()
-        
-        while self.grid_layout.count():
-            widget = self.grid_layout.takeAt(0).widget()
-            if widget:
-                widget.setParent(None)
-                widget.deleteLater()
+            item = self.list_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
 
-        # Get items from database
+        # ── Clear grid layout ──────────────────────────────────────────────
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+
+        # ── Fetch items ────────────────────────────────────────────────────
         if self.search_term:
             items = self.db.search_items(self.search_term)
         else:
             items = self.db.get_all_items()
+        items = [dict(i) for i in items]
 
-        # Add to list view
+        # ── Sort ───────────────────────────────────────────────────────────
+        sk = getattr(self, "sort_key", "time_added")
+        if sk == "name":
+            items.sort(key=lambda x: (x.get("name") or "").lower())
+        elif sk == "price":
+            items.sort(key=lambda x: float(x.get("price") or 0))
+        elif sk == "quantity":
+            items.sort(key=lambda x: int(x.get("quantity") or 0))
+        elif sk == "saleability":
+            items.sort(key=lambda x: int(x.get("total_sold") or 0), reverse=True)
+
+        # ── Rebuild category filter pills ──────────────────────────────────
+        # Remove old pills
+        while self.cat_filter_bar.count():
+            item = self.cat_filter_bar.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+
+        all_cats = ["All"] + sorted({i.get("category_name") or "Uncategorized" for i in items})
+        # If saved filter no longer exists, reset to All
+        if self.active_category_filter not in all_cats:
+            self.active_category_filter = "All"
+        for cat in all_cats:
+            self.cat_filter_bar.addWidget(
+                self._make_cat_pill(cat, cat == self.active_category_filter)
+            )
+        self.cat_filter_scroll_widget.adjustSize()
+
+        # ── Apply category filter ──────────────────────────────────────────
+        if self.active_category_filter != "All":
+            items = [i for i in items
+                     if (i.get("category_name") or "Uncategorized") == self.active_category_filter]
+
+        # ── Group by category ──────────────────────────────────────────────
+        from collections import OrderedDict
+        groups = OrderedDict()
         for item in items:
-            self.list_layout.addWidget(ItemRow(item, on_select=self.display_item_details))
+            cat = item.get("category_name") or "Uncategorized"
+            groups.setdefault(cat, []).append(item)
 
-        # Add to grid view
-        for i, item in enumerate(items):
-            self.grid_layout.addWidget(ItemCard(item, on_select=self.display_item_details), i // 4, i % 4)
+        # ── Populate list view ─────────────────────────────────────────────
+        for cat, cat_items in groups.items():
+            self.list_layout.addWidget(self._make_cat_section_header(cat, len(cat_items)))
+            for item in cat_items:
+                self.list_layout.addWidget(ItemRow(item, on_select=self.display_item_details))
+
+        # ── Populate grid view ─────────────────────────────────────────────
+        grid_row = 0
+        COLS = 4
+        for cat, cat_items in groups.items():
+            # Section header spans full width
+            hdr = self._make_cat_section_header(cat, len(cat_items))
+            self.grid_layout.addWidget(hdr, grid_row, 0, 1, COLS)
+            grid_row += 1
+            for col_idx, item in enumerate(cat_items):
+                self.grid_layout.addWidget(
+                    ItemCard(item, on_select=self.display_item_details),
+                    grid_row + col_idx // COLS,
+                    col_idx % COLS
+                )
+            grid_row += (len(cat_items) + COLS - 1) // COLS
 
     def on_search_changed(self):
         """Handle search input changes."""
@@ -1381,9 +1767,24 @@ class ItemInfoPage(QWidget):
         self.update_icon_btn.setVisible(True) # Show update button
         self.delete_icon_btn.setVisible(True)  # Show delete button
         image_path = item_data.get('image_path')
-        if image_path and Path(image_path).exists():
-            img = QPixmap(image_path)
-            self.detail_image.setPixmap(img.scaled(self.detail_image.width(), self.detail_image.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        # Load image: supports Base64 data URIs (new) and file paths (legacy)
+        pixmap = None
+        if image_path:
+            if image_path.startswith("data:"):
+                import base64 as _b64
+                header, data = image_path.split(",", 1)
+                raw = _b64.b64decode(data)
+                qpix = QPixmap()
+                qpix.loadFromData(raw)
+                pixmap = qpix if not qpix.isNull() else None
+            else:
+                p = Path(image_path)
+                if p.exists():
+                    pixmap = QPixmap(str(p))
+        if pixmap:
+            self.detail_image.setPixmap(pixmap.scaled(
+                self.detail_image.width(), self.detail_image.height(),
+                Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             self.detail_image.setPixmap(QPixmap())
             self.detail_image.setText("No image available")
@@ -1451,55 +1852,44 @@ class ItemInfoPage(QWidget):
             self.item_changed.emit()
 
     def item_sorter(self, default_text="Sort by..."):
-        itemSorter_btn = QPushButton(default_text)
-        itemSorter_btn.setCursor(Qt.PointingHandCursor)
-        itemSorter_btn.setFixedWidth(150)
-        itemSorter_btn.setStyleSheet("""
+        self.sorter_btn = QPushButton(default_text)
+        self.sorter_btn.setCursor(Qt.PointingHandCursor)
+        self.sorter_btn.setFixedWidth(150)
+        self.sorter_btn.setStyleSheet("""
             QPushButton {
-                background-color: white;
-                color: #374151;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                padding: 8px 15px;
-                font-size: 12px;
-                font-weight: 600;                     
-                text-align: center;                                       
-            } 
+                background-color: white; color: #374151;
+                border: 1px solid #d1d5db; border-radius: 6px;
+                padding: 8px 15px; font-size: 12px; font-weight: 600;
+                text-align: center;
+            }
             QPushButton:hover { background-color: #f9fafb; border-color: #4f46e5; }
-            QPushButton::menu-indicator { image: none; }                         
-        """)    
-
-        itemSorter_menu = QMenu(itemSorter_btn)
-        itemSorter_menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                color: #374151;
-                border: 1px solid #d1d5db;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QMenu::item {
-                padding: 8px 25px;
-                background-color: transparent;
-            }
-            QMenu::item:selected {
-                background-color: #4f46e5;
-                color: white;
-                border-radius: 2px;
-            }
+            QPushButton::menu-indicator { image: none; }
         """)
-
-        options = ["By name (Alphabetical)", "By time added", "By Price","By Quantity", "By Saleability"]
-        for opt in options:
-            action = QAction(opt, self)
-            action.triggered.connect(lambda checked=False, text=opt, b=itemSorter_btn: self._update_date_range(text, b))
+        itemSorter_menu = QMenu(self.sorter_btn)
+        itemSorter_menu.setStyleSheet("""
+            QMenu { background-color: #ffffff; color: #374151;
+                border: 1px solid #d1d5db; border-radius: 4px; padding: 5px; }
+            QMenu::item { padding: 8px 25px; background-color: transparent; }
+            QMenu::item:selected { background-color: #4f46e5; color: white; border-radius: 2px; }
+        """)
+        options = [
+            ("By name (Alphabetical)", "name"),
+            ("By time added",          "time_added"),
+            ("By Price",               "price"),
+            ("By Quantity",            "quantity"),
+            ("By Saleability",         "saleability"),
+        ]
+        for label, key in options:
+            action = QAction(label, self)
+            action.triggered.connect(lambda checked=False, lbl=label, k=key: self._apply_sort(lbl, k))
             itemSorter_menu.addAction(action)
+        self.sorter_btn.setMenu(itemSorter_menu)
+        return self.sorter_btn
 
-        itemSorter_btn.setMenu(itemSorter_menu)
-        return itemSorter_btn
-    
-    def _update_date_range(self, text, button):
-        button.setText(text)
+    def _apply_sort(self, label, key):
+        self.sort_key = key
+        self.sorter_btn.setText(label)
+        self.refresh_items()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

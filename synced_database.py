@@ -33,6 +33,12 @@ class SyncedDatabase(SQLiteDatabase):
         super().__init__(db_path=db_path)
         self._engine = sync_engine
         self._on_change = None
+        # Register to be notified when remote pulls upsert rows into local DB
+        try:
+            if hasattr(self._engine, 'set_on_pull_listener'):
+                self._engine.set_on_pull_listener(self._notify_change)
+        except Exception:
+            pass
 
     def set_change_listener(self, callback):
         """Set a callback that runs after any successful local write."""

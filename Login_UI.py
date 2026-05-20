@@ -64,7 +64,7 @@ class LoginWindow(QWidget):
         self.qr_thread = None
         self.face_thread = None
         
-        self.setWindowTitle("ProStock | Login")
+        self.setWindowTitle("ProStock Inventory | Login")
         self.setMinimumSize(1000, 600)
         self.resize(1240, 820)
         self._build_ui()
@@ -92,11 +92,11 @@ class LoginWindow(QWidget):
         brand_logo.setStyleSheet("font-size: 80px; background: transparent;")
         brand_logo.setAlignment(Qt.AlignCenter)
         
-        brand_name = QLabel("Inventory")
+        brand_name = QLabel("ProStock Inventory")
         brand_name.setStyleSheet("color: white; font-size: 42px; font-weight: 800; background: transparent;")
         brand_name.setAlignment(Qt.AlignCenter)
         
-        brand_sub = QLabel("Inventory Management System for you.")
+        brand_sub = QLabel("ProStock Inventory Management System")
         brand_sub.setStyleSheet("color: #9ca3af; font-size: 16px; background: transparent;")
         
         bg_layout.addWidget(brand_logo)
@@ -367,10 +367,13 @@ class LoginWindow(QWidget):
             self._show_error(message, self.face_error_label)
 
     def _register_new_face(self):
-        """Register a new face for a username."""
+        """Register a new face — requires password verification first."""
         if not self.face_auth:
             QMessageBox.warning(self, "Error", "Face recognition not available. Install face-recognition and opencv-python packages.")
             return
+
+        if not self._verify_password_dialog():
+            return  # user cancelled or failed password check
 
         username, ok = self._get_username_dialog()
         if not ok or not username:
@@ -396,7 +399,10 @@ class LoginWindow(QWidget):
             self._show_error(message, self.qr_error_label)
 
     def _register_new_qr(self):
-        """Register a new QR code."""
+        """Register a new QR code — requires password verification first."""
+        if not self._verify_password_dialog():
+            return  # user cancelled or failed password check
+
         username, ok = self._get_username_dialog()
         if not ok or not username:
             return
@@ -404,12 +410,120 @@ class LoginWindow(QWidget):
         try:
             success, qr_data, message = self.qr_auth.generate_qr_code(username)
             if success:
-                QMessageBox.information(self, "QR Code Generated", 
+                QMessageBox.information(self, "QR Code Generated",
                                        f"{message}\n\nYour QR code has been saved.")
             else:
                 self._show_error(message, self.qr_error_label)
         except Exception as e:
             self._show_error(f"Error: {str(e)}", self.qr_error_label)
+
+    def _verify_password_dialog(self):
+        """Show a password prompt and verify it against the auth service.
+        
+        Returns True if the password is correct, False otherwise.
+        The user gets 3 attempts before being locked out of the dialog.
+        """
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Password Required")
+        dialog.setFixedWidth(380)
+        dialog.setStyleSheet("background-color: #ffffff;")
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+
+        # Header
+        title = QLabel("🔒  Verify Your Password")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #111827;")
+        layout.addWidget(title)
+
+        sub = QLabel("Enter your password to continue with this action.")
+        sub.setStyleSheet("font-size: 13px; color: #6b7280;")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        # Username field (pre-filled if traditional login was used)
+        user_lbl = QLabel("Username")
+        user_lbl.setStyleSheet("font-weight: 600; color: #374151; font-size: 13px;")
+        layout.addWidget(user_lbl)
+
+        user_input = QLineEdit()
+        user_input.setPlaceholderText("Enter your username")
+        user_input.setFixedHeight(40)
+        user_input.setStyleSheet(self._input_style())
+        # Pre-fill from traditional login tab if available
+        prefill = self.username_input.text().strip()
+        if prefill:
+            user_input.setText(prefill)
+        layout.addWidget(user_input)
+
+        # Password field
+        pass_lbl = QLabel("Password")
+        pass_lbl.setStyleSheet("font-weight: 600; color: #374151; font-size: 13px;")
+        layout.addWidget(pass_lbl)
+
+        pass_input = QLineEdit()
+        pass_input.setPlaceholderText("Enter your password")
+        pass_input.setEchoMode(QLineEdit.Password)
+        pass_input.setFixedHeight(40)
+        pass_input.setStyleSheet(self._input_style())
+        layout.addWidget(pass_input)
+
+        # Error label (hidden until a wrong attempt)
+        err_lbl = QLabel("")
+        err_lbl.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: bold;")
+        err_lbl.hide()
+        layout.addWidget(err_lbl)
+
+        # Buttons
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.button(QDialogButtonBox.Ok).setText("Confirm")
+        btn_box.button(QDialogButtonBox.Ok).setStyleSheet(self._button_style())
+        btn_box.button(QDialogButtonBox.Cancel).setStyleSheet(self._secondary_button_style())
+        layout.addWidget(btn_box)
+
+        attempts = [0]
+        MAX_ATTEMPTS = 3
+        verified = [False]
+
+        def _try_verify():
+            username = user_input.text().strip()
+            password = pass_input.text().strip()
+
+            if not username or not password:
+                err_lbl.setText("Please enter both username and password.")
+                err_lbl.show()
+                return
+
+            if not self.auth_service:
+                err_lbl.setText("Auth service not configured.")
+                err_lbl.show()
+                return
+
+            success, _ = self.auth_service.validate_login(username, password)
+            if success:
+                verified[0] = True
+                dialog.accept()
+            else:
+                attempts[0] += 1
+                remaining = MAX_ATTEMPTS - attempts[0]
+                if remaining > 0:
+                    err_lbl.setText(f"Incorrect password. {remaining} attempt(s) remaining.")
+                    pass_input.clear()
+                    pass_input.setFocus()
+                else:
+                    err_lbl.setText("Too many failed attempts.")
+                    btn_box.button(QDialogButtonBox.Ok).setEnabled(False)
+                err_lbl.show()
+
+        btn_box.accepted.connect(_try_verify)
+        btn_box.rejected.connect(dialog.reject)
+        pass_input.returnPressed.connect(_try_verify)
+
+        dialog.exec()
+        return verified[0]
 
     def _get_username_dialog(self):
         """Show dialog to get username."""

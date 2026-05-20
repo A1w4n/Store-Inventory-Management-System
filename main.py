@@ -121,6 +121,7 @@ class AppController:
         self.db.set_change_listener(self.dashboard_window.on_data_changed)
 
         self.login_window.login_success_signal.connect(self.show_dashboard)
+        self.dashboard_window.logout_requested.connect(self.show_login)
         self.login_window.show()
 
     def show_dashboard(self):
@@ -129,6 +130,10 @@ class AppController:
     def show_login(self):
         self.login_window.show()
         self.dashboard_window.close()
+
+        self.login_window.username_input.clear()
+        self.login_window.password_input.clear()
+        self.login_window.error_label.hide()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

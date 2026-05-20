@@ -52,27 +52,23 @@ DEBUG_SQL = False
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class InventoryDatabase:
-    def __init__(self, backend="sqlite", db_path="inventory.db", pg_url=None):
-        self.backend = backend
-        self.db_path = db_path
-        self.pg_url = pg_url
-
-    def connect(self):
-        if self.backend == "sqlite":
-            return sqlite3.connect(self.db_path)
-        elif self.backend == "postgres":
-            return psycopg2.connect(self.pg_url)
+    """
+    Unified wrapper that delegates to SQLiteDatabase or PostgreSQLDatabase
+    based on the USE_LOCAL_SQLITE flag.
+    All methods are forwarded to the active backend automatically.
+    """
+    def __init__(self, backend=None, db_path="inventory.db", pg_url=None):
+        # Select backend: explicit arg > env flag
+        use_sqlite = USE_LOCAL_SQLITE if backend is None else (backend == "sqlite")
+        if use_sqlite:
+            self._db = SQLiteDatabase(db_path=db_path)
         else:
-            raise ValueError(f"Unsupported backend: {self.backend}")
+            self._db = PostgreSQLDatabase()
+        self.db_type = self._db.db_type
 
-    def get_user_by_username(self, username):
-        conn = self.connect()
-        cursor = conn.cursor()
-        if self.backend == "sqlite":
-            cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-        else:
-            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
-        return cursor.fetchone()
+    def __getattr__(self, name):
+        """Delegate any method call to the active backend."""
+        return getattr(self._db, name)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -443,7 +439,7 @@ class SQLiteDatabase:
                 INSERT INTO inventory_movements
                 (item_id, movement_type, quantity, previous_quantity, new_quantity, notes, user_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, ("SALE", quantity_sold, current_quantity, new_quantity, 
+            """, (item_id, "SALE", quantity_sold, current_quantity, new_quantity,
                   f"Sold {quantity_sold} units at Php {sale_price}", user_id))
             conn.commit()
             return True
@@ -536,16 +532,19 @@ class SQLiteDatabase:
         return trend
 
     def get_best_seller(self, days=7):
-        """Get best selling item."""
+        """Get best selling item.
+        Returns: (id, name, price, quantity, image_path, total_sold)
+        """
         conn = self.connect()
         cursor = conn.cursor()
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         cursor.execute("""
-            SELECT i.id, i.name, SUM(s.quantity_sold) as total_sold
+            SELECT i.id, i.name, i.price, i.quantity, i.image_path,
+                   SUM(s.quantity_sold) as total_sold
             FROM sales s
             JOIN items i ON s.item_id = i.id
             WHERE s.sale_date >= ?
-            GROUP BY i.id, i.name
+            GROUP BY i.id, i.name, i.price, i.quantity, i.image_path
             ORDER BY total_sold DESC
             LIMIT 1
         """, (cutoff_date,))
@@ -1017,12 +1016,17 @@ class PostgreSQLDatabase:
             return trend
 
     def get_best_seller(self, days=7):
+        """Get best selling item.
+        Returns: (id, name, price, quantity, image_path, total_sold)
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cutoff_date = datetime.now() - timedelta(days=days)
-            cursor.execute("""SELECT i.id, i.name, SUM(s.quantity_sold) as total_sold
+            cursor.execute("""SELECT i.id, i.name, i.price, i.quantity, i.image_path,
+                SUM(s.quantity_sold) as total_sold
                 FROM sales s JOIN items i ON s.item_id = i.id
-                WHERE s.sale_date >= %s GROUP BY i.id, i.name
+                WHERE s.sale_date >= %s
+                GROUP BY i.id, i.name, i.price, i.quantity, i.image_path
                 ORDER BY total_sold DESC LIMIT 1""", (cutoff_date,))
             return cursor.fetchone()
 
@@ -1106,15 +1110,3 @@ class PostgreSQLDatabase:
             """, (cutoff_date,))
             rows = cursor.fetchall()
             return rows    
-
-    def connect(self):
-        """Return a raw psycopg2 connection (for compatibility with Analytics_UI)."""
-        import psycopg2
-        conn = psycopg2.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            database=DB_CONFIG['database'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-        )
-        return conn

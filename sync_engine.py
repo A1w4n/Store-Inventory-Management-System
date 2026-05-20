@@ -39,9 +39,11 @@ logging.basicConfig(level=logging.INFO, format="[%(name)s] %(levelname)s %(messa
 #  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYNC_INTERVAL   = 30          # seconds between auto-sync attempts
-REQUEST_TIMEOUT = 10          # seconds before giving up on a cloud request
-MAX_RETRIES     = 3           # outbox retries before marking as failed
+SYNC_INTERVAL        = 300    # seconds between auto-sync (5 min idle)
+SYNC_INTERVAL_ACTIVE = 60     # seconds after a recent local change (1 min)
+ACTIVE_WINDOW        = 120    # seconds after last enqueue to stay in active mode
+REQUEST_TIMEOUT      = 10     # seconds before giving up on a cloud request
+MAX_RETRIES          = 3      # outbox retries before marking as failed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +99,9 @@ class SyncEngine:
         self._thread: Optional[threading.Thread] = None
         self._last_sync_ts: Optional[str] = None
         self._pending_count    = 0
+        self._last_enqueue_ts: float = 0.0   # tracks last local write for adaptive interval
+        # callback invoked after pull upserts new rows into local DB
+        self._on_pull_change: Optional[Callable] = None
 
         self._init_sync_tables()
         log.info(f"SyncEngine ready — local={self.local_db_path}, cloud={self.cloud_url or '(none)'}")
@@ -175,6 +180,7 @@ class SyncEngine:
                 (table, operation, json.dumps(payload), ts),
             )
             conn.commit()
+        self._last_enqueue_ts = time.monotonic()   # mark recent activity
         self._refresh_pending_count()
         log.debug(f"Enqueued {operation} on {table}: {payload}")
 
@@ -236,10 +242,14 @@ class SyncEngine:
     # ------------------------------------------------------------------ #
 
     def _loop(self) -> None:
-        """Background thread main loop."""
+        """Background thread main loop with adaptive sync interval."""
         while not self._stop_event.is_set():
             self._sync_cycle()
-            self._stop_event.wait(timeout=SYNC_INTERVAL)
+            # Use shorter interval if a local write happened recently
+            since_last_write = time.monotonic() - self._last_enqueue_ts
+            interval = SYNC_INTERVAL_ACTIVE if since_last_write < ACTIVE_WINDOW else SYNC_INTERVAL
+            log.debug(f"Next sync in {interval}s (active={since_last_write < ACTIVE_WINDOW})")
+            self._stop_event.wait(timeout=interval)
 
     def _sync_cycle(self) -> dict:
         """One full push → pull cycle. Returns a summary dict."""
@@ -382,12 +392,25 @@ class SyncEngine:
                     count = handler(rows)
                     total += count
                     log.debug(f"Pulled {count} rows from {path}")
+                    # notify listeners that new rows were pulled into local DB
+                    try:
+                        if count and self._on_pull_change:
+                            self._on_pull_change()
+                    except Exception as e:
+                        log.debug(f"on_pull_change callback error: {e}")
                 else:
                     log.warning(f"Pull {path} returned HTTP {resp.status_code}")
             except Exception as e:
                 log.warning(f"Pull {path} failed: {e}")
 
         return total
+
+    def set_on_pull_listener(self, callback: Optional[Callable]):
+        """Register a callback invoked after pull upserts new rows into local DB.
+
+        The callback should be a callable taking no arguments.
+        """
+        self._on_pull_change = callback
 
     # ── Upsert handlers ───────────────────────────────────────────────────
 

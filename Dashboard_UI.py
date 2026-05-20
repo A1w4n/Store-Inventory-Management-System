@@ -1,13 +1,11 @@
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QFrame, QPushButton, QStackedWidget, QMenu
+    QLabel, QFrame, QPushButton, QStackedWidget, QMenu, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QFont, QPixmap
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -143,18 +141,55 @@ class BestSellerWidget(QFrame):
         header.addWidget(trend_lbl, 0, Qt.AlignRight)
         layout.addLayout(header)
 
-        # Image
-        if image_path and Path(image_path).exists():
-            img = QPixmap(image_path)
-            img_label = QLabel()
-            img_label.setPixmap(img.scaledToWidth(120, Qt.SmoothTransformation))
-            img_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(img_label)
+        # Image — supports Base64 data URIs (new) and file paths (legacy)
+        img_label = QLabel()
+        img_label.setFixedSize(120, 120)
+        img_label.setAlignment(Qt.AlignCenter)
+        img_label.setStyleSheet("""
+            QLabel {
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                background-color: #f9fafb;
+            }
+        """)
+
+        pixmap = None
+        if image_path:
+            if image_path.startswith("data:"):
+                # Base64 encoded image stored in DB
+                import base64 as _b64
+                try:
+                    _, b64data = image_path.split(",", 1)
+                    raw = _b64.b64decode(b64data)
+                    qpix = QPixmap()
+                    qpix.loadFromData(raw)
+                    pixmap = qpix if not qpix.isNull() else None
+                except Exception:
+                    pixmap = None
+            else:
+                # Legacy file path
+                p = Path(image_path)
+                if p.exists():
+                    pixmap = QPixmap(str(p))
+
+        if pixmap:
+            img_label.setPixmap(
+                pixmap.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
         else:
-            placeholder = QLabel("📦")
-            placeholder.setStyleSheet("font-size: 40px; text-align: center;")
-            placeholder.setAlignment(Qt.AlignCenter)
-            layout.addWidget(placeholder)
+            # Styled placeholder when no image is available
+            img_label.setText("📦")
+            img_label.setStyleSheet("""
+                QLabel {
+                    font-size: 48px;
+                    border: 2px dashed #d1d5db;
+                    border-radius: 10px;
+                    background-color: #f9fafb;
+                    color: #9ca3af;
+                }
+            """)
+
+        layout.addWidget(img_label, 0, Qt.AlignCenter)
 
         # Item Name
         name_lbl = QLabel(item_name)
@@ -179,10 +214,11 @@ class BestSellerWidget(QFrame):
 # --- MAIN DASHBOARD WINDOW ---
 
 class InventoryDashboard(QWidget):
+    logout_requested = Signal()
     def __init__(self, db=None):
         super().__init__()
         self.db = db or InventoryDatabase()
-        self.setWindowTitle("ProStock | Inventory Management")
+        self.setWindowTitle("ProStock Inventory")
         self.resize(1240, 820)
         self.chart_widget = None
         self.best_seller_widget = None
@@ -211,18 +247,53 @@ class InventoryDashboard(QWidget):
             }
         """)
         self._build_ui()
+        # Debounce rapid data-change notifications to avoid UI lag.
+        from PySide6.QtCore import QTimer
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        # coalesce multiple events; default comes from settings
+        try:
+            self._refresh_interval_ms = int(self._settings_svc.get("ui_refresh_debounce_ms", 800))
+        except Exception:
+            self._refresh_interval_ms = 800
+        self._refresh_timer.timeout.connect(self._perform_debounced_refresh)
 
     def on_data_changed(self):
-        """Handle database writes by refreshing dashboard stats and charts."""
-        self._refresh_all_stats()
-        self._update_chart()
-        self._populate_category_revenue_chart()
-        if hasattr(self, 'sales_analysis_page') and self.sales_analysis_page:
+        """Handle database writes by scheduling a debounced refresh to reduce lag."""
+        # restart debounce timer
+        try:
+            self._refresh_timer.start(self._refresh_interval_ms)
+        except Exception:
+            # fallback: perform immediate refresh if timer not available
+            self._perform_debounced_refresh()
+
+    def _perform_debounced_refresh(self):
+        # Actual heavy refresh work performed once per debounce interval.
+        # Only refresh the active page to avoid doing expensive work for
+        # non-visible pages which can cause UI lag when the user navigates.
+        try:
+            current = self.content_stack.currentIndex()
+        except Exception:
+            current = 0
+
+        # Always refresh dashboard stats in the background if we're on dashboard
+        if current == 0:
+            self._refresh_all_stats()
+            self._update_chart()
+            self._populate_category_revenue_chart()
+        elif current == 2 and hasattr(self, 'sales_analysis_page') and self.sales_analysis_page:
             self.sales_analysis_page.refresh()
-        if hasattr(self, 'inventory_health_page') and self.inventory_health_page:
+        elif current == 3 and hasattr(self, 'inventory_health_page') and self.inventory_health_page:
             self.inventory_health_page.refresh()
-        if hasattr(self, 'analytics_page') and self.analytics_page:
+        elif current == 4 and hasattr(self, 'analytics_page') and self.analytics_page:
             self.analytics_page.refresh()
+
+    def _on_settings_saved(self, updates: dict):
+        """Handle settings changes that affect dashboard behavior."""
+        try:
+            self._refresh_interval_ms = int(self._settings_svc.get("ui_refresh_debounce_ms", self._refresh_interval_ms))
+        except Exception:
+            pass
 
     def _build_ui(self):
         self.outer_layout = QHBoxLayout(self)
@@ -240,7 +311,7 @@ class InventoryDashboard(QWidget):
         brand_logo.setStyleSheet("color: white; font-size: 35px; font-weight: 800; padding-left: 15px;")
         sidebar_layout.addWidget(brand_logo, 0, Qt.AlignCenter)
 
-        brand_name = QLabel("INVENTORY")
+        brand_name = QLabel("ProStock\nInventory")
         brand_name.setStyleSheet("color: white; font-size: 20px; font-weight: 800; margin-bottom: 50px;")
         sidebar_layout.addWidget(brand_name, 0, Qt.AlignCenter)
 
@@ -264,6 +335,20 @@ class InventoryDashboard(QWidget):
             self.nav_buttons[index] = btn
 
         sidebar_layout.addStretch()
+
+        #  logout Buttom
+        self.logout_btn = QPushButton("|<= Logout")
+        self.logout_btn.setCursor(Qt.PointingHandCursor)
+        self.logout_btn.setStyleSheet("""
+            QPushButton { 
+                text-align: left; padding: 12px 25px; font-size: 13px;
+                font-weight: 500; color #ef4444; border: none; background: transparent;
+            }                                                                      
+            QPushButton:hover { background-color: #1f2937; color: #f87171}   
+        """)
+        self.logout_btn.clicked.connect(self.logout)
+        sidebar_layout.addWidget(self.logout_btn)
+
         self.outer_layout.addWidget(sidebar)
 
         # --- STACKED CONTENT AREA ---
@@ -277,7 +362,7 @@ class InventoryDashboard(QWidget):
         
         # 1: Item Info
         self.item_info_page = ItemInfoPage(self.db)
-        self.item_info_page.item_changed.connect(self._refresh_all_stats)
+        self.item_info_page.item_changed.connect(self.on_data_changed)
         self.content_stack.addWidget(self.item_info_page)
         
         # 2: Sales Analysis
@@ -299,6 +384,11 @@ class InventoryDashboard(QWidget):
         # 6: Settings
         self._settings_svc = SettingsService()
         self.settings_page = SettingsPage(self._settings_svc)
+        # Update debounce interval when settings are saved
+        try:
+            self.settings_page.settings_saved.connect(lambda updates: self._on_settings_saved(updates))
+        except Exception:
+            pass
         self.content_stack.addWidget(self.settings_page) 
         
         self.outer_layout.addWidget(self.content_stack)
@@ -465,6 +555,8 @@ class InventoryDashboard(QWidget):
         # Refresh the active page when switching to it
         if index == 0:
             self._refresh_all_stats()
+            self._update_chart()
+            self._populate_category_revenue_chart()
         elif index == 2:
             self.sales_analysis_page.refresh()
         elif index == 3:
@@ -593,35 +685,57 @@ class InventoryDashboard(QWidget):
     def _plot_inventory_chart(self, figure):
         ax = figure.add_subplot(111)
 
+        # Get total stock (always shown regardless of date range)
+        total_stock = self.db.get_dashboard_stats()['total_quantity']
+
         # Get items added per day
         items_added = self.db.get_items_added_per_day(self.date_range_days)
         items_added = [item for item in items_added if item[0] is not None]
+
         if not items_added:
+            # Still show total stock info even when no items were added in range
             ax.text(0.5, 0.5, 'No items added in selected period',
-                   ha='center', va='center', transform=ax.transAxes)
+                    ha='center', va='center', transform=ax.transAxes,
+                    fontsize=9, color='#6b7280')
+            ax.set_title(f'Total Stock: {total_stock} units', fontsize=9,
+                         color='#10b981', pad=6)
+            ax.axis('off')
+            figure.tight_layout(pad=0.5)
             return
 
-        # Get total stock
-        total_stock = self.db.get_dashboard_stats()['total_quantity']
-
         # Prepare data
-        dates = [item[0] for item in items_added]  # DATE strings
-        counts = [item[1] for item in items_added]  # counts
-
+        dates = [str(item[0]) for item in items_added]
+        counts = [item[1] for item in items_added]
         x = range(len(dates))
 
-        # Plot bars for items added
-        ax.bar(x, counts, color='#4f46e5', alpha=0.7, label='Items Added')
+        # Left axis — bars for items added per day
+        bars = ax.bar(x, counts, color='#4f46e5', alpha=0.75, label='Items Added')
+        ax.set_ylabel('Items Added', fontsize=8, color='#4f46e5')
+        ax.tick_params(axis='y', labelsize=7, colors='#4f46e5')
+        ax.set_ylim(0, max(counts) * 1.4 if counts else 1)
 
-        # Plot horizontal line for total stock
-        ax.axhline(y=total_stock, color='#10b981', linestyle='--', linewidth=2, label=f'Total Stock: {total_stock}')
+        # Right axis — horizontal line for total stock (different scale)
+        ax2 = ax.twinx()
+        ax2.axhline(y=total_stock, color='#10b981', linestyle='--',
+                    linewidth=2, label=f'Total Stock: {total_stock}')
+        ax2.set_ylabel('Total Stock (units)', fontsize=8, color='#10b981')
+        ax2.tick_params(axis='y', labelsize=7, colors='#10b981')
+        # Give some headroom above and below the stock line so it's clearly visible
+        ax2.set_ylim(max(0, total_stock * 0.8), total_stock * 1.2 if total_stock else 1)
 
-        ax.set_ylabel('Count', fontsize=8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(['-'.join(d.split('-')[1:]) if len(d.split('-')) >= 3 else d for d in dates], rotation=45, ha='right', fontsize=7)  # MM-DD
-        ax.legend(fontsize=7, loc='upper left')
+        # X-axis labels
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(
+            ['-'.join(d.split('-')[1:]) if len(d.split('-')) >= 3 else d for d in dates],
+            rotation=45, ha='right', fontsize=7
+        )
+
+        # Combine legends from both axes
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, fontsize=7, loc='upper left')
+
         ax.grid(True, alpha=0.3)
-        ax.tick_params(axis='y', labelsize=7)
         figure.tight_layout(pad=0.5)
 
     def _populate_category_revenue_chart(self):
@@ -646,6 +760,19 @@ class InventoryDashboard(QWidget):
             print(f"[Dashboard] Error loading category revenue: {e}")
             self.category_revenue_chart.set_data(["Error loading data"], [0])
 
+    def logout(self):
+        """Handle user logout with a confirmation dialog."""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Logout",
+            "Are you sure you want to log out?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.logout_requested.emit()
+            self.close()
+            
 # Initialize UI
 if __name__ == "__main__":
     app = QApplication(sys.argv)
