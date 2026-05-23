@@ -9,7 +9,7 @@ Fixes:
 """
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from database import InventoryDatabase
 
 
@@ -73,7 +73,7 @@ class AnalyticsDB:
     # ──────────────────────────────────────────────────────────
 
     def revenue_by_day(self, days):
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._q("""
             SELECT DATE(sale_date) as d,
                    COALESCE(SUM(quantity_sold * sale_price), 0) as rev,
@@ -87,7 +87,7 @@ class AnalyticsDB:
         date_map = {r["d"]: (r["rev"], r["units"]) for r in rows}
         dates, revs, units = [], [], []
         for i in range(days):
-            d = (datetime.now() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+            d = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
             dates.append(d[-5:])
             rv, un = date_map.get(d, (0, 0))
             revs.append(float(rv))
@@ -95,7 +95,7 @@ class AnalyticsDB:
         return dates, revs, units
 
     def revenue_by_category(self, days):
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         return self._q("""
             SELECT c.name,
                    COALESCE(SUM(s.quantity_sold * s.sale_price), 0) as rev,
@@ -108,7 +108,7 @@ class AnalyticsDB:
         """, (cutoff,))
 
     def top_items_by_revenue(self, days, limit=10):
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         return self._q("""
             SELECT i.name, i.price, i.quantity,
                    COALESCE(SUM(s.quantity_sold), 0) as units_sold,
@@ -121,7 +121,7 @@ class AnalyticsDB:
         """, (cutoff, limit))
 
     def avg_order_value(self, days):
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         row = self._q1("""
             SELECT COALESCE(AVG(quantity_sold * sale_price), 0) as aov
             FROM sales WHERE sale_date >= ?
@@ -129,14 +129,14 @@ class AnalyticsDB:
         return row["aov"] if row else 0
 
     def total_transactions(self, days):
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         row = self._q1(
             "SELECT COUNT(*) as n FROM sales WHERE sale_date >= ?", (cutoff,))
         return row["n"] if row else 0
 
     def gross_margin_by_category(self, days):
         """Estimates cost as 60 % of sale_price (no cost column in schema)."""
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         return self._q("""
             SELECT c.name,
                    COALESCE(SUM(s.quantity_sold * s.sale_price), 0) as revenue,
@@ -155,7 +155,7 @@ class AnalyticsDB:
 
     def dead_stock(self, days=30):
         """Items with zero sales in N days that still have stock."""
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         return self._q("""
             SELECT i.name, i.quantity, i.price,
                    COALESCE(c.name, 'Uncategorised') as cat,
@@ -171,7 +171,7 @@ class AnalyticsDB:
 
     def sell_through_rate(self, days):
         """sell_through = units_sold / (units_sold + current_stock) * 100."""
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         return self._q("""
             SELECT i.name, i.quantity as stock,
                    COALESCE(SUM(s.quantity_sold), 0) as sold,
@@ -187,7 +187,7 @@ class AnalyticsDB:
 
     def restock_forecast(self, days=30):
         """Returns top-10 items sorted by urgency (fewest days_left first)."""
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._q("""
             SELECT i.id, i.name, i.quantity, i.low_stock_threshold,
                    COALESCE(SUM(s.quantity_sold), 0) as total_sold
@@ -213,7 +213,7 @@ class AnalyticsDB:
         return result[:10]
 
     def movement_type_breakdown(self, days):
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         return self._q("""
             SELECT movement_type,
                    COUNT(*) as cnt,

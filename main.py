@@ -1,8 +1,10 @@
 from dotenv import load_dotenv
+
 import os
 import sys
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QMetaObject, Qt
+
 from auth_service import AuthService
 from Login_UI import LoginWindow as UI_Base
 from Dashboard_UI import InventoryDashboard
@@ -13,13 +15,9 @@ from synced_database import SyncedDatabase
 # Load environment variables from .env
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")        # Neon postgres connection string
-CLOUD_URL    = os.getenv("CLOUD_URL", "")       # Render connection string
+DATABASE_URL = os.getenv("DATABASE_URL")   # Neon postgres connection string
+CLOUD_URL    = os.getenv("CLOUD_URL", "")  # Render connection string
 WEB_PORT     = 5000
-
-#    CLOUD_URL  → your Render web service URL
-#    DATABASE_URL → your Neon PostgreSQL connection string (used by web_server
-#                   on Render; the desktop never connects to Neon directly)
 
 engine = SyncEngine(
     local_db_path="inventory.db",
@@ -30,17 +28,10 @@ engine = SyncEngine(
     ),
 )
 
-# ── 2. Create the database (offline-first, wraps SQLite + queues writes) ───
-#    Drop-in replacement for PostgreSQLDatabase() — same API, works offline.
 db = SyncedDatabase(engine, db_path="inventory.db")
 
-# ── 3. Start the engine AFTER the db is ready ──────────────────────────────
-#    This kicks off the 30-second background sync loop.
-#    First sync happens immediately: pushes any queued offline writes, then
-#    pulls the latest cloud data into local SQLite.
 engine.start()
 
-# ── 4. Auth service uses the same db ──────────────────────────
 backend = AuthService(db)
 
 
@@ -64,7 +55,6 @@ class LoginWindow(UI_Base):
             return
 
         success, message = self.auth_service.validate_login(username, password)
-
         if success:
             self.login_success_signal.emit(username)
             self.close()
@@ -97,14 +87,29 @@ class LoginWindow(UI_Base):
             QLineEdit:focus { border: 2px solid #6366f1; background-color: white; }
         """)
 
+
 class AppController:
     def __init__(self, auth_service: AuthService, db: SyncedDatabase):
-        self.auth_service = auth_service
-        self.db = db
-        self.login_window     = LoginWindow(auth_service)
+        self.auth_service    = auth_service
+        self.db              = db
+        self.login_window    = LoginWindow(auth_service)
         self.dashboard_window = InventoryDashboard(db)
 
-        self.db.set_change_listener(self.dashboard_window.on_data_changed)
+        # ── KEY FIX ────────────────────────────────────────────────────────
+        # The sync engine calls set_change_listener's callback from its
+        # background thread. Calling QTimer.start() from that thread causes:
+        #   "QObject::startTimer: Timers cannot be started from another thread"
+        # Solution: wrap in QMetaObject.invokeMethod with QueuedConnection so
+        # the actual on_data_changed() always runs on the Qt main thread.
+        def _thread_safe_data_changed():
+            QMetaObject.invokeMethod(
+                self.dashboard_window,
+                "on_data_changed",
+                Qt.QueuedConnection
+            )
+
+        self.db.set_change_listener(_thread_safe_data_changed)
+        # ───────────────────────────────────────────────────────────────────
 
         self.login_window.login_success_signal.connect(self.show_dashboard)
         self.dashboard_window.logout_requested.connect(self.show_login)
@@ -116,27 +121,23 @@ class AppController:
     def show_login(self):
         self.login_window.show()
         self.dashboard_window.close()
-
         self.login_window.username_input.clear()
         self.login_window.password_input.clear()
         self.login_window.error_label.hide()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Entry point
+# Entry point
 # ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # Start the staff web portal (serves the web UI + the new sync API endpoints)
     start_server(host="0.0.0.0", port=WEB_PORT, db_path="inventory.db", db=db)
     print(f"[Staff Portal] Open http://localhost:{WEB_PORT} in any browser on this network")
 
     controller = AppController(backend, db)
 
-    # Clean shutdown — stop the sync thread when Qt exits
     exit_code = app.exec()
     engine.stop()
     sys.exit(exit_code)
