@@ -28,9 +28,36 @@ import time
 import threading
 import logging
 import requests
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional, Callable
+
+def _clean_date(date_str: str) -> str:
+    """Standardise RFC 1123, ISO 8601, and local formats to YYYY-MM-DD HH:MM:SS."""
+    if not date_str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    date_str = str(date_str).strip()
+    
+    # Try ISO/SQLite standard format (e.g. YYYY-MM-DD HH:MM:SS)
+    try:
+        if len(date_str) >= 10 and date_str[4] == '-' and date_str[7] == '-':
+            if "T" in date_str:
+                dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            return date_str
+    except Exception:
+        pass
+        
+    # Try RFC 1123 format (e.g. Fri, 08 May 2026 20:31:35 GMT)
+    try:
+        dt = parsedate_to_datetime(date_str)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+        
+    return date_str
 
 log = logging.getLogger("SyncEngine")
 logging.basicConfig(level=logging.INFO, format="[%(name)s] %(levelname)s %(message)s")
@@ -188,12 +215,16 @@ class SyncEngine:
     #  Internal — SQLite helpers                                           #
     # ------------------------------------------------------------------ #
 
+    @contextmanager
     def _local_conn(self):
         conn = sqlite3.connect(str(self.local_db_path), timeout=15, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=15000;")
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_sync_tables(self) -> None:
         """Create the outbox and meta tables if they don't exist."""
@@ -438,7 +469,9 @@ class SyncEngine:
                     r.get("category_id"), r.get("description"),
                     r.get("price"), r.get("quantity"),
                     r.get("low_stock_threshold", 10),
-                    r.get("image_path"), r.get("created_at"), r.get("updated_at"),
+                    r.get("image_path"), 
+                    _clean_date(r.get("created_at")), 
+                    _clean_date(r.get("updated_at")),
                 ))
             conn.commit()
         return len(rows)
@@ -453,7 +486,10 @@ class SyncEngine:
                     VALUES (?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET
                         name=excluded.name, description=excluded.description
-                """, (r.get("id"), r.get("name"), r.get("description"), r.get("created_at")))
+                """, (
+                    r.get("id"), r.get("name"), r.get("description"), 
+                    _clean_date(r.get("created_at")),
+                ))
             conn.commit()
         return len(rows)
 
@@ -468,7 +504,9 @@ class SyncEngine:
                     VALUES (?,?,?,?,?,?)
                 """, (
                     r.get("id"), r.get("item_id"), r.get("quantity_sold"),
-                    r.get("sale_price"), r.get("sale_date"), r.get("user_id"),
+                    r.get("sale_price"), 
+                    _clean_date(r.get("sale_date")), 
+                    r.get("user_id"),
                 ))
             conn.commit()
         return len(rows)
@@ -486,7 +524,8 @@ class SyncEngine:
                 """, (
                     r.get("id"), r.get("item_id"), r.get("movement_type"),
                     r.get("quantity"), r.get("previous_quantity"), r.get("new_quantity"),
-                    r.get("notes"), r.get("user_id"), r.get("created_at"),
+                    r.get("notes"), r.get("user_id"), 
+                    _clean_date(r.get("created_at")),
                 ))
             conn.commit()
         return len(rows)
@@ -507,7 +546,9 @@ class SyncEngine:
                         is_active=excluded.is_active
                 """, (
                     r.get("id"), r.get("username"), r.get("password_hash"),
-                    r.get("email"), r.get("created_at"), r.get("is_active", 1),
+                    r.get("email"), 
+                    _clean_date(r.get("created_at")), 
+                    r.get("is_active", 1),
                 ))
             conn.commit()
         return len(rows)

@@ -22,9 +22,9 @@ WEB_PORT     = 5000
 engine = SyncEngine(
     local_db_path="inventory.db",
     cloud_url=CLOUD_URL,
-    on_status_change=lambda status: print(f"[Sync] Status → {status}"),
+    on_status_change=lambda status: print(f"[Sync] Status -> {status}"),
     on_sync_complete=lambda summary: print(
-        f"[Sync] Done — pushed={summary['pushed']}, pulled={summary['pulled']}, at={summary['ts']}"
+        f"[Sync] Done - pushed={summary['pushed']}, pulled={summary['pulled']}, at={summary['ts']}"
     ),
 )
 
