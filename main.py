@@ -3,29 +3,24 @@ import os
 import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Signal
-
 from auth_service import AuthService
 from Login_UI import LoginWindow as UI_Base
 from Dashboard_UI import InventoryDashboard
 from web_server import start_server
-
-# ── NEW: offline-first sync ────────────────────────────────────────────────
 from sync_engine import SyncEngine, SyncStatus
 from synced_database import SyncedDatabase
-# ──────────────────────────────────────────────────────────────────────────
 
 # Load environment variables from .env
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")        # Neon postgres connection string
-CLOUD_URL    = os.getenv("CLOUD_URL", "")       # e.g. https://your-app.onrender.com
+CLOUD_URL    = os.getenv("CLOUD_URL", "")       # Render connection string
 WEB_PORT     = 5000
 
-# ── 1. Create the sync engine ──────────────────────────────────────────────
-#    It manages the local SQLite cache AND background push/pull to the cloud.
 #    CLOUD_URL  → your Render web service URL
 #    DATABASE_URL → your Neon PostgreSQL connection string (used by web_server
 #                   on Render; the desktop never connects to Neon directly)
+
 engine = SyncEngine(
     local_db_path="inventory.db",
     cloud_url=CLOUD_URL,
@@ -45,13 +40,9 @@ db = SyncedDatabase(engine, db_path="inventory.db")
 #    pulls the latest cloud data into local SQLite.
 engine.start()
 
-# ── 4. Auth service uses the same db (unchanged) ──────────────────────────
+# ── 4. Auth service uses the same db ──────────────────────────
 backend = AuthService(db)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  LoginWindow — unchanged from your original
-# ─────────────────────────────────────────────────────────────────────────────
 
 class LoginWindow(UI_Base):
     login_success_signal = Signal(str)
@@ -105,11 +96,6 @@ class LoginWindow(UI_Base):
             }
             QLineEdit:focus { border: 2px solid #6366f1; background-color: white; }
         """)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  AppController — unchanged from your original
-# ─────────────────────────────────────────────────────────────────────────────
 
 class AppController:
     def __init__(self, auth_service: AuthService, db: SyncedDatabase):

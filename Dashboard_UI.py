@@ -218,6 +218,7 @@ class InventoryDashboard(QWidget):
     def __init__(self, db=None):
         super().__init__()
         self.db = db or InventoryDatabase()
+        self.adb = AnalyticsDB(self.db)   # shared instance — row_factory always set
         self.setWindowTitle("ProStock Inventory")
         self.resize(1240, 820)
         self.chart_widget = None
@@ -281,6 +282,8 @@ class InventoryDashboard(QWidget):
             self._refresh_all_stats()
             self._update_chart()
             self._populate_category_revenue_chart()
+        elif current == 1 and hasattr(self, 'item_info_page') and self.item_info_page:
+            self.item_info_page.refresh_items()
         elif current == 2 and hasattr(self, 'sales_analysis_page') and self.sales_analysis_page:
             self.sales_analysis_page.refresh()
         elif current == 3 and hasattr(self, 'inventory_health_page') and self.inventory_health_page:
@@ -557,10 +560,14 @@ class InventoryDashboard(QWidget):
             self._refresh_all_stats()
             self._update_chart()
             self._populate_category_revenue_chart()
+        elif index == 1:
+            self.item_info_page.refresh_items()
         elif index == 2:
             self.sales_analysis_page.refresh()
         elif index == 3:
             self.inventory_health_page.refresh()
+        elif index == 4:
+            self.analytics_page.refresh()
     
         for btn_index, btn in self.nav_buttons.items():
             if btn_index == index:
@@ -741,20 +748,28 @@ class InventoryDashboard(QWidget):
     def _populate_category_revenue_chart(self):
         """Populate the revenue by category bar chart."""
         try:
-            adb = AnalyticsDB(self.db)
-            cat_data = adb.revenue_by_category(self.date_range_days)
-            
+            # Reconnect so SQLite row_factory is always fresh
+            self.adb = AnalyticsDB(self.db)
+            cat_data = self.adb.revenue_by_category(self.date_range_days)
+
             if not cat_data:
                 self.category_revenue_chart.set_data(["No data"], [0])
                 return
-            
+
+            # sqlite3.Row supports [] access but NOT .get() — use [] with fallback
+            def _get(row, key, default=0):
+                try:
+                    return row[key]
+                except (IndexError, KeyError):
+                    return default
+
             # Get top 5 categories by revenue
-            cat_data_sorted = sorted(cat_data, key=lambda x: x.get("rev", 0), reverse=True)[:5]
-            
-            labels = [c.get("name", "Unknown")[:15] for c in cat_data_sorted]
-            values = [float(c.get("rev", 0)) for c in cat_data_sorted]
+            cat_data_sorted = sorted(cat_data, key=lambda x: _get(x, "rev", 0), reverse=True)[:5]
+
+            labels = [str(_get(c, "name", "Unknown"))[:15] for c in cat_data_sorted]
+            values = [float(_get(c, "rev", 0)) for c in cat_data_sorted]
             colors = ["#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#f43f5e"][:len(labels)]
-            
+
             self.category_revenue_chart.set_data(labels, values, colors)
         except Exception as e:
             print(f"[Dashboard] Error loading category revenue: {e}")
