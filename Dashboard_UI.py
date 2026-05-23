@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton, QStackedWidget, QMenu, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QMetaObject, Q_ARG
 from PySide6.QtGui import QAction, QFont, QPixmap
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -258,6 +258,20 @@ class InventoryDashboard(QWidget):
         except Exception:
             self._refresh_interval_ms = 800
         self._refresh_timer.timeout.connect(self._perform_debounced_refresh)
+
+        # Register for sale events from the web server (Flask thread).
+        # QMetaObject.invokeMethod ensures the refresh runs on the Qt main thread.
+        try:
+            from web_server import register_sale_callback
+            register_sale_callback(self._on_sale_from_portal)
+        except Exception as e:
+            print(f"[Dashboard] Could not register sale callback: {e}")
+
+    def _on_sale_from_portal(self):
+        """Called from the Flask thread when a staff portal purchase completes.
+        Uses QMetaObject.invokeMethod to safely hand off to the Qt main thread.""""
+        QMetaObject.invokeMethod(self, "_perform_debounced_refresh",
+                                 Qt.QueuedConnection)
 
     def on_data_changed(self):
         """Handle database writes by scheduling a debounced refresh to reduce lag."""

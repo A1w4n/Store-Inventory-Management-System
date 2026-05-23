@@ -36,6 +36,35 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Sale event callbacks — thread-safe way to notify the Qt UI
+# ─────────────────────────────────────────────────────────────────────────────
+#  Any module can call register_sale_callback(fn) to be notified after
+#  a purchase completes. Callbacks are invoked from the Flask thread,
+#  so UI code must use QMetaObject.invokeMethod(..., Qt.QueuedConnection).
+
+_sale_callbacks: list = []
+_sale_cb_lock = threading.Lock()
+
+
+def register_sale_callback(fn):
+    """Register a callable that will be called after every successful purchase."""
+    with _sale_cb_lock:
+        if fn not in _sale_callbacks:
+            _sale_callbacks.append(fn)
+
+
+def _notify_sale():
+    """Called internally after a successful purchase to fire all callbacks."""
+    with _sale_cb_lock:
+        cbs = list(_sale_callbacks)
+    for fn in cbs:
+        try:
+            fn()
+        except Exception as e:
+            print(f"[WebServer] Sale callback error: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Active Staff Tracking
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -227,6 +256,11 @@ def api_purchase():
                 "error":     "Insufficient stock.",
             })
             all_ok = False
+
+    # Notify any registered listeners (e.g. the Qt dashboard) that sales happened.
+    # Safe to call from the Flask thread — listeners handle thread-crossing themselves.
+    if any(r["ok"] for r in results):
+        _notify_sale()
 
     return jsonify({"ok": all_ok, "results": results})
 

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QComboBox, QFileDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QMetaObject, Slot
 from PySide6.QtGui import QFont
 
 from database import InventoryDatabase
@@ -273,11 +273,27 @@ class SalesAnalysisPage(QWidget):
 
     def __init__(self, db: InventoryDatabase, parent=None):
         super().__init__(parent)
+        self._db = db                     # keep reference so we can reconnect
         self.adb = AnalyticsDB(db)
         self.current_days = 7
         self.setStyleSheet("background: #f9fafb;")
         self._build_ui()
         self.refresh()
+
+        # QTimer must be created on the main thread — safe here since __init__
+        # is always called from the Qt main thread via Dashboard_UI.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(30_000)
+        self._refresh_timer.timeout.connect(self._silent_refresh)
+        self._refresh_timer.start()
+
+        # Hook into web server sale events for immediate chart updates.
+        # Uses QueuedConnection so Flask thread never touches Qt widgets directly.
+        try:
+            from web_server import register_sale_callback
+            register_sale_callback(self._on_sale_from_portal)
+        except Exception:
+            pass  # Standalone mode — 30s timer fallback is enough
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -295,6 +311,11 @@ class SalesAnalysisPage(QWidget):
         title.setStyleSheet(
             "font-size: 22px; font-weight: 700; color: #111827; border: none;")
         hdr_lay.addWidget(title)
+
+        self.status_label = QLabel("Updated: —")
+        self.status_label.setStyleSheet(
+            "font-size: 11px; color: #9ca3af; border: none;")
+        hdr_lay.addWidget(self.status_label)
         hdr_lay.addStretch()
 
         self.period_combo = QComboBox()
@@ -317,10 +338,10 @@ class SalesAnalysisPage(QWidget):
         self.period_combo.currentTextChanged.connect(self._on_period_change)
         hdr_lay.addWidget(self.period_combo)
 
-        refresh_btn = QPushButton("⟳  Refresh")
-        refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.setFixedHeight(36)
-        refresh_btn.setStyleSheet("""
+        self.refresh_btn = QPushButton("⟳  Refresh")
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.setFixedHeight(36)
+        self.refresh_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #4f46e5, stop:1 #6366f1);
@@ -328,9 +349,10 @@ class SalesAnalysisPage(QWidget):
                 font-size: 13px; font-weight: 600; border: none;
             }
             QPushButton:hover { background: #4338ca; }
+            QPushButton:disabled { background: #d1d5db; color: #9ca3af; }
         """)
-        refresh_btn.clicked.connect(self.refresh)
-        hdr_lay.addWidget(refresh_btn)
+        self.refresh_btn.clicked.connect(self._manual_refresh)
+        hdr_lay.addWidget(self.refresh_btn)
 
         self.report_btn = QPushButton("📊  Generate Report")
         self.report_btn.setCursor(Qt.PointingHandCursor)
@@ -479,71 +501,107 @@ class SalesAnalysisPage(QWidget):
         err.setStyleSheet("QLabel { color: #111827; font-size: 13px; }")
         err.exec()
 
+    def _on_sale_from_portal(self):
+        """Called from Flask thread — safely dispatches to Qt main thread."""
+        QMetaObject.invokeMethod(self, "_silent_refresh", Qt.QueuedConnection)
+
+    @Slot()
+    def _silent_refresh(self):
+        """Called by timer or sale callback — reconnects AnalyticsDB and reloads charts."""
+        self.adb = AnalyticsDB(self._db)
+        self.refresh()
+
+    def _manual_refresh(self):
+        """Called by the Refresh button — gives visual feedback + forces fresh read."""
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("⟳  Refreshing…")
+        self.adb = AnalyticsDB(self._db)   # reconnect so SQLite row_factory is fresh
+        self.refresh()
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText("⟳  Refresh")
+
     def refresh(self):
+        from datetime import datetime as _dt
         days = self.current_days
 
-        # KPIs
-        while self.kpi_row.count():
-            item = self.kpi_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        try:
+            # KPIs
+            while self.kpi_row.count():
+                item = self.kpi_row.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
 
-        cat_rows = self.adb.revenue_by_category(days)
-        total_rev = sum(r["rev"] for r in cat_rows)
-        total_units = sum(r["units"] for r in cat_rows)
-        aov = self.adb.avg_order_value(days)
-        txns = self.adb.total_transactions(days)
+            cat_rows = self.adb.revenue_by_category(days)
+            total_rev = sum(r["rev"] for r in cat_rows)
+            total_units = sum(r["units"] for r in cat_rows)
+            aov = self.adb.avg_order_value(days)
+            txns = self.adb.total_transactions(days)
 
-        for icon, title, val, sub, color in [
-            ("💰", "Total Revenue",   f"₱{total_rev:,.2f}", f"Last {days} days", "#10b981"),
-            ("📦", "Units Sold",      f"{int(total_units):,}", f"Last {days} days", "#6366f1"),
-            ("🧾", "Transactions",    str(txns),             f"Last {days} days", "#3b82f6"),
-            ("📊", "Avg Order Value", f"₱{aov:,.2f}",        "Per transaction",  "#f59e0b"),
-        ]:
-            self.kpi_row.addWidget(KpiCard(icon, title, val, sub, color))
+            for icon, title, val, sub, color in [
+                ("💰", "Total Revenue",   f"₱{total_rev:,.2f}", f"Last {days} days", "#10b981"),
+                ("📦", "Units Sold",      f"{int(total_units):,}", f"Last {days} days", "#6366f1"),
+                ("🧾", "Transactions",    str(txns),             f"Last {days} days", "#3b82f6"),
+                ("📊", "Avg Order Value", f"₱{aov:,.2f}",        "Per transaction",  "#f59e0b"),
+            ]:
+                self.kpi_row.addWidget(KpiCard(icon, title, val, sub, color))
 
-        # Revenue chart
-        dates, revs, units = self.adb.revenue_by_day(days)
-        self.rev_chart.set_series({
-            "Revenue (₱)": {"data": revs, "color": "#6366f1"},
-            "Units": {"data": [u * (max(revs)/max(units) if max(units) else 1)
-                               for u in units], "color": "#10b981"},
-        }, x_labels=dates)
+            # Revenue chart
+            dates, revs, units = self.adb.revenue_by_day(days)
+            # Guard against all-zero data so max() doesn't crash
+            max_rev   = max(revs)   if any(revs)   else 1
+            max_units = max(units)  if any(units)  else 1
+            scale     = max_rev / max_units
+            self.rev_chart.set_series({
+                "Revenue (₱)": {"data": revs, "color": "#6366f1"},
+                "Units":       {"data": [u * scale for u in units], "color": "#10b981"},
+            }, x_labels=dates)
 
-        # Category revenue bar
-        if cat_rows:
-            self.cat_rev_bar.set_data(
-                [r["name"] for r in cat_rows],
-                [float(r["rev"]) for r in cat_rows],
-                ["#6366f1"] * len(cat_rows))
+            # Category revenue bar
+            if cat_rows:
+                self.cat_rev_bar.set_data(
+                    [r["name"] for r in cat_rows],
+                    [float(r["rev"]) for r in cat_rows],
+                    ["#6366f1"] * len(cat_rows))
 
-        # Gross margin
-        margin_rows = self.adb.gross_margin_by_category(days)
-        if margin_rows:
-            margins = [float(r["revenue"] - r["cost"]) for r in margin_rows]
-            colors = ["#10b981" if m >= 0 else "#ef4444" for m in margins]
-            self.margin_bar.set_data(
-                [r["name"] for r in margin_rows], margins, colors)
+            # Gross margin
+            margin_rows = self.adb.gross_margin_by_category(days)
+            if margin_rows:
+                margins = [float(r["revenue"] - r["cost"]) for r in margin_rows]
+                colors  = ["#10b981" if m >= 0 else "#ef4444" for m in margins]
+                self.margin_bar.set_data(
+                    [r["name"] for r in margin_rows], margins, colors)
 
-        # Top items table
-        top = self.adb.top_items_by_revenue(days)
-        self.top_table.setRowCount(0)
-        for row in top:
-            r = self.top_table.rowCount()
-            self.top_table.insertRow(r)
-            avg_sp = (row["revenue"] / row["units_sold"]
-                      if row["units_sold"] else 0)
-            for col, val in enumerate([
-                row["name"],
-                f"₱{row['price']:.2f}",
-                str(int(row["units_sold"])),
-                f"₱{row['revenue']:,.2f}",
-                f"₱{avg_sp:.2f}",
-            ]):
-                item = QTableWidgetItem(val)
-                item.setTextAlignment(Qt.AlignVCenter |
-                    (Qt.AlignLeft if col == 0 else Qt.AlignCenter))
-                self.top_table.setItem(r, col, item)
+            # Top items table
+            top = self.adb.top_items_by_revenue(days)
+            self.top_table.setRowCount(0)
+            for row in top:
+                r = self.top_table.rowCount()
+                self.top_table.insertRow(r)
+                avg_sp = (row["revenue"] / row["units_sold"]
+                          if row["units_sold"] else 0)
+                for col, val in enumerate([
+                    row["name"],
+                    f"₱{row['price']:.2f}",
+                    str(int(row["units_sold"])),
+                    f"₱{row['revenue']:,.2f}",
+                    f"₱{avg_sp:.2f}",
+                ]):
+                    cell = QTableWidgetItem(val)
+                    cell.setTextAlignment(Qt.AlignVCenter |
+                        (Qt.AlignLeft if col == 0 else Qt.AlignCenter))
+                    self.top_table.setItem(r, col, cell)
+
+            # ✅ Update status label so the user can see it worked
+            now = _dt.now().strftime("%I:%M:%S %p")
+            self.status_label.setText(f"Updated: {now}")
+            self.status_label.setStyleSheet(
+                "font-size: 11px; color: #10b981; border: none;")
+
+        except Exception as e:
+            # Show error in status label instead of silently failing
+            self.status_label.setText(f"⚠ Refresh failed: {e}")
+            self.status_label.setStyleSheet(
+                "font-size: 11px; color: #ef4444; border: none;")
 
 
 # ── Standalone runner ────────────────────────────────────────
