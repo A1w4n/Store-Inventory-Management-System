@@ -249,6 +249,8 @@ class InventoryDashboard(QWidget):
         """)
         self._build_ui()
         # Debounce rapid data-change notifications to avoid UI lag.
+        # Timer is created here but .start() is only called later (on demand),
+        # so no 'startTimer from another thread' warning fires at startup.
         from PySide6.QtCore import QTimer
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -258,6 +260,8 @@ class InventoryDashboard(QWidget):
         except Exception:
             self._refresh_interval_ms = 800
         self._refresh_timer.timeout.connect(self._perform_debounced_refresh)
+        # Move the timer to the main thread explicitly so Qt knows its affinity
+        self._refresh_timer.moveToThread(QApplication.instance().thread())
 
         # Register for sale events from the web server (Flask thread).
         # QMetaObject.invokeMethod ensures the refresh runs on the Qt main thread.
@@ -269,7 +273,7 @@ class InventoryDashboard(QWidget):
 
     def _on_sale_from_portal(self):
         """Called from the Flask thread when a staff portal purchase completes.
-        Uses QMetaObject.invokeMethod to safely hand off to the Qt main thread.""""
+        Uses QMetaObject.invokeMethod to safely hand off to the Qt main thread."""
         QMetaObject.invokeMethod(self, "_perform_debounced_refresh",
                                  Qt.QueuedConnection)
 

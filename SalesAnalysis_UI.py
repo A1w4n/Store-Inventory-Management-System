@@ -280,12 +280,14 @@ class SalesAnalysisPage(QWidget):
         self._build_ui()
         self.refresh()
 
-        # QTimer must be created on the main thread — safe here since __init__
-        # is always called from the Qt main thread via Dashboard_UI.
+        # Create timer on main thread but defer .start() until the Qt event
+        # loop is actually running — avoids 'startTimer from another thread'
+        # warnings that fire when __init__ is called before app.exec().
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(30_000)
         self._refresh_timer.timeout.connect(self._silent_refresh)
-        self._refresh_timer.start()
+        # singleShot(0) defers .start() to the first event loop tick
+        QTimer.singleShot(0, self._refresh_timer.start)
 
         # Hook into web server sale events for immediate chart updates.
         # Uses QueuedConnection so Flask thread never touches Qt widgets directly.
